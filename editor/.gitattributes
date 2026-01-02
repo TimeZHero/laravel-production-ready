@@ -1,0 +1,23 @@
+* text=auto eol=lf
+
+*.blade.php diff=html
+*.css diff=css
+*.html diff=html
+*.md diff=markdown
+*.php diff=php
+
+# Exclude from git archive (production releases)
+/.github export-ignore
+/.gitlab-ci.yml export-ignore
+/.ai export-ignore
+/.cursor export-ignore
+/.editorconfig export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/docker-compose.yml export-ignore
+/Dockerfile export-ignore
+/nginx export-ignore
+/tests export-ignore
+/phpunit.xml export-ignore
+*.md export-ignore
+.styleci.yml export-ignore

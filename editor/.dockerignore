@@ -1,0 +1,57 @@
+# Git
+.git
+.gitattributes
+.gitignore
+
+# Dependencies (installed in container)
+node_modules
+vendor
+
+# Environment
+.env
+.env.*
+auth.json
+
+# IDE
+.cursor
+.fleet
+.idea
+.nova
+.vscode
+.zed
+.phpactor.json
+.editorconfig
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Documentation
+*.md
+LICENSE
+
+# Testing
+tests
+phpunit.xml
+.phpunit.cache
+.phpunit.result.cache
+
+# Build artifacts
+public/build
+public/hot
+public/storage
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+
+# Docker (avoid recursion)
+docker-compose*.yml
+Dockerfile*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.log
