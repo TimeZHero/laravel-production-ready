@@ -3,7 +3,7 @@ set -eu
 
 echo ">> Container startup"
 
-if [ "${APP_ENV:-production}" != "production" ]; then
+if [ "${APP_ENV:-production}" = "local" ]; then
     if [ ! -f "vendor/autoload.php" ]; then
         echo "vendor not found, running composer install..."
         composer install --no-interaction
