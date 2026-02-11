@@ -45,9 +45,8 @@ storage/framework/cache/*
 storage/framework/sessions/*
 storage/framework/views/*
 
-# Docker (avoid recursion)
+# Docker
 docker-compose*.yml
-Dockerfile*
 
 # OS
 .DS_Store
