@@ -1,0 +1,94 @@
+resources:
+  db:
+    type: mariadb
+    options:
+      storage: 2
+  redis:
+    type: redis
+
+environment:
+  # Go runtime (FrankenPHP) - set to ~90% of memory limit
+  - GOMEMLIMIT=920MiB
+
+  - APP_NAME=MY_APP
+  - APP_ENV=production
+  - APP_DEBUG=false
+  - APP_URL=https://${APP_DOMAIN}
+  - APP_KEY
+  - DB_CONNECTION
+  - DB_URL
+
+  # AWS
+  - AWS_ACCESS_KEY_ID
+  - AWS_SECRET_ACCESS_KEY
+  - AWS_BUCKET
+  - AWS_URL
+  - AWS_DEFAULT_REGION=eu-west-1
+  - AWS_USE_PATH_STYLE_ENDPOINT=true
+
+  # Drivers
+  - CACHE_STORE
+  - QUEUE_CONNECTION
+  - LOG_CHANNEL=stderr
+
+  # Support for multiple server instances
+  - APP_MAINTENANCE_DRIVER=cache
+  - APP_MAINTENANCE_STORE=database
+
+  - COMPOSER_AUTH
+
+services:
+  app:
+    domain: ${APP_DOMAIN}
+    build:
+      manifest: Dockerfile
+    health:
+      grace: 30
+      interval: 10
+      path: /up
+      timeout: 4
+    internal: false
+    port: 8080
+    termination:
+      grace: 45
+    timeout: 120
+    resources:
+      - db
+      - redis
+    deployment:
+      minimum: 50
+      maximum: 200
+    scale:
+      count: 1-30
+      targets:
+        cpu: 70
+        memory: 90
+      cpu: 250
+      memory: 1024
+      
+  worker:
+    build:
+      manifest: Dockerfile
+    command: php artisan queue:work --tries=3 --timeout=90 --max-time=86400 --max-jobs=1000
+    internal: true
+    health:
+      disable: true
+    termination:
+      grace: 45
+    timeout: 120
+    resources:
+      - db
+      - redis
+    deployment:
+      minimum: 50
+      maximum: 200
+    scale:
+      count: 1
+      cpu: 250
+      memory: 1024
+
+timers:
+  scheduler:
+    command: php artisan schedule:run
+    schedule: "0 * * * *"
+    service: app

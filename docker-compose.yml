@@ -1,0 +1,21 @@
+services:
+    laravel.test:
+        build:
+            dockerfile: Dockerfile
+            target: development
+            args:
+                ENGINE: 'fpm'
+                USER: 'sail'
+                WWWUSER: '${WWWUSER-1000}'
+                COMPOSER_AUTH: '${COMPOSER_AUTH}'
+        extra_hosts:
+            - 'host.docker.internal:host-gateway'
+        ports:
+            - '${APP_PORT:-80}:8080'
+            - '${VITE_PORT:-5173}:${VITE_PORT:-5173}'
+        environment:
+            APP_ENV: '${APP_ENV:-local}'
+            COMPOSER_AUTH: '${COMPOSER_AUTH}'
+        volumes:
+            - '.:/app'
+        tty: true
