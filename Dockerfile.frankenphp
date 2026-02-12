@@ -1,0 +1,171 @@
+# Use Debian (glibc) for better performance - musl libc is slower with PHP ZTS mode
+#
+# See: https://frankenphp.dev/docs/performance/#dont-use-musl
+#
+# Not specifying defaults to latest Debian version
+#
+ARG FRANKENPHP_VERSION=1-php8.4
+ARG ENGINE=frankenphp
+ARG USER=nobody
+
+# =============================================================================
+# Base layer
+#
+# Installs PHP extensions and the packages required to run the image.
+#
+# The FrankenPHP php wrapper (scripts/php.frankenphp.sh) is NOT installed
+# here so that install-php-extensions can still use the real php binary
+# in downstream stages (e.g. development). The wrapper is applied in the
+# engine stage instead.
+# =============================================================================
+FROM dunglas/frankenphp:${FRANKENPHP_VERSION} AS base
+
+ARG USER
+ARG WWWUSER=1000
+
+ENV USER=${USER}
+
+WORKDIR /app
+
+# Install additional system packages
+#
+# - Laravel requirements: https://laravel.com/docs/master/deployment#server-requirements
+#
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    npm \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PHP extensions
+RUN install-php-extensions \
+    # Required by Laravel
+    ctype \
+    curl \
+    dom \
+    fileinfo \
+    gd \
+    intl \
+    mbstring \
+    opcache \
+    openssl \
+    phar \
+    session \
+    tokenizer \
+    xml \
+    pdo \
+    pcntl \
+    bcmath \
+    zip \
+    # Standard packages
+    simplexml \
+    xmlreader \
+    xmlwriter \
+    iconv \
+    redis \
+    igbinary \
+    # Database drivers
+    mysqli \
+    pdo_mysql
+
+# - Install Composer
+# - Create user with UID matching host user (for file permission compatibility)
+# - Create group and user only if they don't already exist
+# - Remove caps
+# - Fix permissions
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/bin/ --filename=composer; \
+    getent group ${USER} || groupadd ${USER}; \
+    getent passwd ${USER} || useradd -u ${WWWUSER} -g ${USER} -m ${USER}; \
+    setcap -r /usr/local/bin/frankenphp; \
+    chown -R ${USER}:${USER} /app /config/caddy /data/caddy
+
+# Configure PHP
+COPY --link confs/php.ini ${PHP_INI_DIR}/conf.d/app.ini
+# Entrypoint
+COPY --link --chmod=755 scripts/start-container.sh /usr/local/bin/start-container
+
+# Runtime configuration
+EXPOSE 8080
+HEALTHCHECK --timeout=10s CMD curl --silent --fail http://127.0.0.1:8080/up
+ENTRYPOINT ["start-container"]
+CMD ["php", "artisan", "octane:start", "--server=frankenphp", "--port=8080"]
+
+# =============================================================================
+# Dependencies layer
+#
+# Local packages should be placed in the packages directory
+#
+# This layer keeps credentials safe
+# =============================================================================
+FROM base AS dependencies
+
+ARG COMPOSER_AUTH
+
+COPY --link composer.* packages .
+
+RUN composer install --no-cache --optimize-autoloader --no-interaction --no-dev --no-scripts --prefer-dist
+
+# =============================================================================
+# FrankenPHP
+# =============================================================================
+FROM base AS frankenphp
+
+# https://frankenphp.dev/docs/known-issues/#composer-scripts-referencing-php
+COPY --link --chmod=755 scripts/php.frankenphp.sh /usr/local/bin/php
+ENV PHP_BINARY=/usr/local/bin/php
+
+# =============================================================================
+# Production
+# =============================================================================
+FROM ${ENGINE} AS production
+
+ARG USER
+
+ENV OCTANE_HTTPS=true
+
+# Copy pre-built vendor from dependencies
+COPY --link --chown=${USER}:${USER} --from=dependencies /app/vendor vendor
+
+# Copy application source
+COPY --link --chown=${USER}:${USER} . .
+
+# Finalize: build frontend, run composer scripts, cleanup
+RUN npm ci; \
+    npm run build; \
+    rm -rf node_modules; \
+    composer dump-autoload --optimize --classmap-authoritative
+
+# Switch to non-root user for runtime
+USER ${USER}
+
+# =============================================================================
+# Development
+# =============================================================================
+FROM base AS development
+
+ARG USER
+
+ENV OPCACHE_VALIDATE_TIMESTAMPS=1
+ENV OCTANE_HTTPS=false
+
+# Install dev-only packages and PHP extensions
+# install-php-extensions needs the real php binary (not the FrankenPHP wrapper),
+# so this stage inherits from base (where php is still the real binary).
+# The wrapper is applied afterwards via COPY.
+RUN apt-get update && apt-get install -y --no-install-recommends bash \
+    && install-php-extensions xdebug \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# https://frankenphp.dev/docs/known-issues/#composer-scripts-referencing-php
+COPY --link --chmod=755 scripts/php.frankenphp.sh /usr/local/bin/php
+ENV PHP_BINARY=/usr/local/bin/php
+
+# Switch to non-root user for runtime
+USER ${USER}
+
+CMD ["php", "artisan", "octane:start", "--watch", "--server=frankenphp", "--port=8080"]
+
+# =============================================================================
+# Default target
+# =============================================================================
+FROM production
