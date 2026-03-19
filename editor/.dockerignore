@@ -10,6 +10,7 @@ vendor
 # Environment
 .env
 .env.*
+!.env.example
 auth.json
 
 # IDE
