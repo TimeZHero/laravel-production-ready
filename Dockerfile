@@ -44,6 +44,7 @@ RUN apk add --no-cache \
     php${PHP_VERSION}-xmlreader \
     php${PHP_VERSION}-xmlwriter \
     supervisor \
+    git \
     # Common packages
     php${PHP_VERSION}-pcntl \
     php${PHP_VERSION}-bcmath \
@@ -153,6 +154,7 @@ FROM ${ENGINE} AS production
 
 ARG ENGINE
 ARG USER
+ARG WWWUSER=1000
 
 ENV OCTANE_HTTPS=true
 
@@ -160,10 +162,10 @@ ENV OCTANE_HTTPS=true
 COPY --link confs/nginx/enable-sendfile.conf /etc/nginx/conf.d/enable-sendfile.conf
 
 # Copy pre-built vendor from dependencies
-COPY --link --chown=${USER}:${USER} --from=dependencies /app/vendor vendor
+COPY --link --chown=${WWWUSER}:${WWWUSER} --from=dependencies /app/vendor vendor
 
 # Copy application source
-COPY --link --chown=${USER}:${USER} . .
+COPY --link --chown=${WWWUSER}:${WWWUSER} . .
 
 # Download RoadRunner binary (only if engine is roadrunner)
 RUN if [ "${ENGINE}" = "roadrunner" ]; then \
