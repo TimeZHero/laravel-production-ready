@@ -6,7 +6,7 @@ services:
             args:
                 ENGINE: 'fpm'
                 USER: 'sail'
-                WWWUSER: '${WWWUSER-1000}'
+                WWWUSER: '${WWWUSER:-1000}'
                 COMPOSER_AUTH: '${COMPOSER_AUTH}'
         extra_hosts:
             - 'host.docker.internal:host-gateway'
@@ -18,4 +18,5 @@ services:
             COMPOSER_AUTH: '${COMPOSER_AUTH}'
         volumes:
             - '.:/app'
+            - '/app/.git'
         tty: true
