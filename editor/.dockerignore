@@ -10,7 +10,6 @@ vendor
 # Environment
 .env
 .env.*
-!.env.example
 auth.json
 
 # IDE
@@ -22,10 +21,15 @@ auth.json
 .zed
 .phpactor.json
 .editorconfig
+.agents
+.ai
+boost.json
+skills-lock.json
 
 # CI/CD
 .github
 .gitlab-ci.yml
+sonar-project.properties
 
 # Documentation
 *.md
@@ -52,6 +56,10 @@ docker-compose*.yml
 # OS
 .DS_Store
 Thumbs.db
+
+# Dev-only
+sail
+openapi.yaml
 
 # Misc
 *.log
