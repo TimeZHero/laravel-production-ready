@@ -63,7 +63,10 @@ RUN apk add --no-cache \
 RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/bin/ --filename=composer; \
     getent group ${USER} || addgroup ${USER}; \
     getent passwd ${USER} || adduser -u ${WWWUSER} -G ${USER} -D -h /home/${USER} ${USER}; \
-    chown -R ${USER}:${USER} /app /run /var/lib/nginx /var/log/nginx
+    mkdir -p /home/${USER} && chown ${WWWUSER}:${WWWUSER} /home/${USER}; \
+    chown -R ${WWWUSER}:${WWWUSER} /app /run /var/lib/nginx /var/log/nginx
+
+ENV HOME=/home/${USER}
 
 # Supervisord
 COPY --link confs/supervisor.d/supervisord.conf /etc/supervisord.conf
@@ -93,7 +96,8 @@ FROM base AS dependencies
 
 ARG COMPOSER_AUTH
 
-COPY --link composer.* packages .
+COPY --link composer.* .
+COPY --link packages/ packages/
 
 RUN composer install --no-cache --optimize-autoloader --no-interaction --no-dev --no-scripts --prefer-dist
 
@@ -154,8 +158,12 @@ FROM ${ENGINE} AS production
 
 ARG ENGINE
 ARG USER
-ARG WWWUSER=1000
+ARG WWWUSER
+ARG COMMIT_SHA
+ARG BRANCH
 
+ENV COMMIT_SHA=${COMMIT_SHA}
+ENV BRANCH=${BRANCH}
 ENV OCTANE_HTTPS=true
 
 # Production-specific nginx config
@@ -172,14 +180,16 @@ RUN if [ "${ENGINE}" = "roadrunner" ]; then \
         ./vendor/bin/rr get-binary --no-interaction --no-config --quiet; \
     fi
 
-# Finalize: build frontend, run composer scripts, cleanup
-RUN npm ci; \
-    npm run build; \
-    rm -rf node_modules; \
-    composer dump-autoload --optimize --classmap-authoritative
+# Build frontend, generate optimized autoload, cleanup
+RUN npm ci && \
+    npm run build && \
+    rm -rf node_modules && \
+    composer dump-autoload --optimize --classmap-authoritative && \
+    chown ${WWWUSER}:${WWWUSER} /app && \
+    chown -R ${WWWUSER}:${WWWUSER} bootstrap/cache storage
 
 # Switch to non-root user for runtime
-USER ${USER}
+USER ${WWWUSER}
 
 # =============================================================================
 # Development
@@ -209,7 +219,7 @@ COPY --link confs/supervisor.d/queue.conf /etc/supervisor.d/queue.conf
 COPY --link confs/supervisor.d/scheduler.conf /etc/supervisor.d/scheduler.conf
 
 # Switch to non-root user for runtime
-USER ${USER}
+USER ${WWWUSER}
 
 # =============================================================================
 # Default target

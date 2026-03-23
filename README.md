@@ -15,6 +15,7 @@ Compatible with [Laravel Sail](https://github.com/laravel/sail) for local develo
   - [Docker Compose & Convox](#docker-compose--convox)
   - [Redis](#redis)
   - [Vite](#vite)
+- [Environment Variables](#environment-variables)
 - [Things to Review](#things-to-review)
 - [FrankenPHP](#frankenphp)
   - [Key Differences](#key-differences)
@@ -116,6 +117,29 @@ The image ships with [igbinary](https://github.com/igbinary/igbinary) and [lz4](
 The program to run `npm run dev` is **not enabled by default** because of the performance overhead it introduces. Depending on your project, you may not want it running all the time.
 
 To enable it, copy the unused Vite supervisor program from the Dockerfile's development stage into your active supervisord configs — or simply run `npm run dev` manually whenever you need it.
+
+---
+
+## Environment Variables
+
+The production image exposes two environment variables:
+
+| Variable | Build Arg | Description |
+|---|---|---|
+| `COMMIT_SHA` | `COMMIT_SHA` | The Git commit SHA used to build the image |
+| `BRANCH` | `BRANCH` | The Git branch used to build the image |
+
+Pass them at build time:
+
+```bash
+convox deploy --build-args "COMMIT_SHA=$CI_COMMIT_SHA" --build-args "BRANCH=$CI_COMMIT_REF_NAME"
+```
+
+At runtime they are available as regular environment variables, which makes them useful for Sentry releases:
+
+```php
+'release' => env('COMMIT_SHA'),
+```
 
 ---
 
