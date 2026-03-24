@@ -41,6 +41,9 @@ clover.xml
 .DS_Store
 Thumbs.db
 
+# RoadRunner
+/rr
+
 # Legacy
 Homestead.json
 Homestead.yaml

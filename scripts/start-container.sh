@@ -17,12 +17,6 @@ if [ "${APP_ENV:-production}" = "local" ]; then
         echo "building assets..."
         npm run build
     fi
-
-    # Download RoadRunner binary if needed
-    if [ "${OCTANE_SERVER:-}" = "roadrunner" ] && [ ! -f "./rr" ]; then
-        echo "downloading RoadRunner binary..."
-        ./vendor/bin/rr get-binary --no-interaction --no-config --quiet
-    fi
 fi
 
 # Run migrations
