@@ -218,6 +218,14 @@ The Caddy volumes below are **not** set by default, but they are needed in a sin
 
 ## Additional Notes
 
+- **OPcache & FPM in production** — When running FPM in production, OPcache is enabled. This means that code changes made at runtime (e.g. via `docker exec`) will not be reflected because PHP serves the cached opcodes. To force a full reload, gracefully restart the FPM master process:
+
+```bash
+kill -USR2 $(pgrep -o php-fpm)
+```
+
+This kills all FPM workers and respawns them with a clean OPcache state.
+
 - [Laragear Preload](https://github.com/Laragear/Preload) did not seem worth the complexity in a Kubernetes environment.
 
 ---
