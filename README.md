@@ -128,11 +128,12 @@ The production image exposes two environment variables:
 |---|---|---|
 | `COMMIT_SHA` | `COMMIT_SHA` | The Git commit SHA used to build the image |
 | `BRANCH` | `BRANCH` | The Git branch used to build the image |
+| — | `ENGINE` | The engine to use: `fpm`, `swoole`, `roadrunner`, `frankenphp` |
 
-Pass them at build time:
+Pass them at build time (adjust `ENGINE` to match your chosen engine):
 
 ```bash
-convox deploy --build-args "COMMIT_SHA=$CI_COMMIT_SHA" --build-args "BRANCH=$CI_COMMIT_REF_NAME"
+convox deploy --build-args "COMMIT_SHA=$CI_COMMIT_SHA" --build-args "BRANCH=$CI_COMMIT_REF_NAME" --build-args "ENGINE=swoole"
 ```
 
 At runtime they are available as regular environment variables, which makes them useful for Sentry releases:
