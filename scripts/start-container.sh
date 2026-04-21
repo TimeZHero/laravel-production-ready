@@ -19,9 +19,9 @@ if [ "${APP_ENV:-production}" = "local" ]; then
     fi
 fi
 
-# Run migrations
+# --isolated uses cache locks; fall back to non-isolated if the cache table doesn't exist yet
 echo "running migrations..."
-php artisan migrate --force --isolated
+php artisan migrate --force --isolated 2>/dev/null || php artisan migrate --force
 
 # Production environment
 if [ "${APP_ENV:-production}" = "production" ]; then
