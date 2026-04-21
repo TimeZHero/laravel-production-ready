@@ -4,7 +4,7 @@
 #
 # Not specifying defaults to latest Debian version
 #
-ARG FRANKENPHP_VERSION=1-php8.4
+ARG FRANKENPHP_VERSION=1-php8.5
 ARG ENGINE=frankenphp
 ARG USER=nobody
 
@@ -46,7 +46,6 @@ RUN install-php-extensions \
     gd \
     intl \
     mbstring \
-    opcache \
     openssl \
     phar \
     session \

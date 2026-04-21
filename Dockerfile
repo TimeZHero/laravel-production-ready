@@ -1,5 +1,5 @@
 ARG ALPINE_VERSION=3.23
-ARG PHP_VERSION=84
+ARG PHP_VERSION=85
 ARG ENGINE=fpm
 ARG USER=nobody
 
@@ -34,7 +34,6 @@ RUN apk add --no-cache \
     php${PHP_VERSION}-intl \
     php${PHP_VERSION}-mbstring \
     php${PHP_VERSION}-mysqli \
-    php${PHP_VERSION}-opcache \
     php${PHP_VERSION}-openssl \
     php${PHP_VERSION}-pdo \
     php${PHP_VERSION}-phar \
@@ -56,11 +55,14 @@ RUN apk add --no-cache \
     # Database drivers
     php${PHP_VERSION}-pdo_mysql
 
+# - Create version-agnostic php alias (Alpine only ships /usr/bin/php${PHP_VERSION})
 # - Install Composer
 # - Fix permissions
 # - Create user with UID matching host user (for file permission compatibility)
 # - Create group and user only if they don't already exist
-RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/bin/ --filename=composer; \
+RUN ln -sf /usr/bin/php${PHP_VERSION} /usr/bin/php; \
+    ln -sf /usr/bin/php${PHP_VERSION} /usr/local/bin/php; \
+    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/bin/ --filename=composer; \
     getent group ${USER} || addgroup ${USER}; \
     getent passwd ${USER} || adduser -u ${WWWUSER} -G ${USER} -D -h /home/${USER} ${USER}; \
     mkdir -p /home/${USER} && chown ${WWWUSER}:${WWWUSER} /home/${USER}; \
