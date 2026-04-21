@@ -76,7 +76,9 @@ If you maintain local Composer packages committed in the same repository, place 
 
 ### Docker Compose & Convox
 
-Both `docker-compose.yml` and `convox.yml` are **minimal examples** meant as a starting point. They are not meant to be used as-is — review them, adjust values, and extend them to match your project's requirements.
+Both `compose.yaml` and `convox.yml` are **minimal examples** meant as a starting point. They are not meant to be used as-is — review them, adjust values, and extend them to match your project's requirements.
+
+The compose.yaml is meant to only represent the important values for this setup, merge it with yours
 
 The two Docker Compose settings you want to configure are:
 

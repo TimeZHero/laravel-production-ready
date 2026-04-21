@@ -15,7 +15,7 @@ services:
             - '${VITE_PORT:-5173}:${VITE_PORT:-5173}'
         environment:
             APP_ENV: '${APP_ENV:-local}'
-            COMPOSER_AUTH: '${COMPOSER_AUTH}'
+            COMPOSER_AUTH: '${COMPOSER_AUTH:-}'
         volumes:
             - '.:/app'
             - '/app/.git'
