@@ -12,7 +12,7 @@ Compatible with [Laravel Sail](https://github.com/laravel/sail) for local develo
 - [Usage](#usage)
   - [Editor Files](#editor-files)
   - [Local Packages](#local-packages)
-  - [Docker Compose & Convox](#docker-compose--convox)
+  - [Compose & Convox](#compose--convox)
   - [Redis](#redis)
   - [Vite](#vite)
 - [Environment Variables](#environment-variables)
@@ -31,7 +31,6 @@ Compatible with [Laravel Sail](https://github.com/laravel/sail) for local develo
 ## Local Setup
 
 1. Install [Laravel Sail](https://laravel.com/docs/12.x/sail) in your project and publish the assets.
-
 2. Publish the Sail binary. This lets new developers skip running `composer install` right after cloning just to get Sail working. It should be updated every time the Sail version is updated.
 
 ```bash
@@ -39,7 +38,7 @@ php artisan vendor:publish --provider="Laravel\\Sail\\SailServiceProvider" --tag
 chmod +x sail
 ```
 
-3. Add this to your `composer.json` to automate updating the binary on every `composer update`:
+1. Add this to your `composer.json` to automate updating the binary on every `composer update`:
 
 ```json
 {
@@ -52,7 +51,7 @@ chmod +x sail
 }
 ```
 
-4. Update the alias in your shell config (`~/.zshrc` for Zsh, `~/.bashrc` for Bash) so it picks up the local binary when available:
+1. Update the alias in your shell config (`~/.zshrc` for Zsh, `~/.bashrc` for Bash) so it picks up the local binary when available:
 
 ```bash
 alias sail='bash $([ -f sail ] && echo sail || echo vendor/bin/sail)'
@@ -74,7 +73,7 @@ The `editor/` folder contains starter versions of `.dockerignore`, `.gitignore`,
 
 If you maintain local Composer packages committed in the same repository, place them inside a `packages/` folder at the root of your project. The Docker build already accounts for this.
 
-### Docker Compose & Convox
+### Compose & Convox
 
 Both `compose.yaml` and `convox.yml` are **minimal examples** meant as a starting point. They are not meant to be used as-is — review them, adjust values, and extend them to match your project's requirements.
 
@@ -82,10 +81,12 @@ The compose.yaml is meant to only represent the important values for this setup,
 
 The two Docker Compose settings you want to configure are:
 
-| Setting              | Possible Values                              |
-|----------------------|----------------------------------------------|
-| `build.target`       | `development`, `production`                  |
-| `build.args.ENGINE`  | `fpm`, `swoole`, `roadrunner`, `frankenphp`  |
+
+| Setting             | Possible Values                             |
+| ------------------- | ------------------------------------------- |
+| `build.target`      | `development`, `production`                 |
+| `build.args.ENGINE` | `fpm`, `swoole`, `roadrunner`, `frankenphp` |
+
 
 > **Which engine should I use?**
 >
@@ -126,11 +127,13 @@ To enable it, copy the unused Vite supervisor program from the Dockerfile's deve
 
 The production image exposes two environment variables:
 
-| Variable | Build Arg | Description |
-|---|---|---|
-| `COMMIT_SHA` | `COMMIT_SHA` | The Git commit SHA used to build the image |
-| `BRANCH` | `BRANCH` | The Git branch used to build the image |
-| — | `ENGINE` | The engine to use: `fpm`, `swoole`, `roadrunner`, `frankenphp` |
+
+| Variable     | Build Arg    | Description                                                    |
+| ------------ | ------------ | -------------------------------------------------------------- |
+| `COMMIT_SHA` | `COMMIT_SHA` | The Git commit SHA used to build the image                     |
+| `BRANCH`     | `BRANCH`     | The Git branch used to build the image                         |
+| —            | `ENGINE`     | The engine to use: `fpm`, `swoole`, `roadrunner`, `frankenphp` |
+
 
 Pass them at build time (adjust `ENGINE` to match your chosen engine):
 
@@ -152,11 +155,13 @@ Before deploying, make sure to review these configuration values and adjust them
 
 **Upload & body size limits** — These three values work together and should be kept in sync. If a user uploads a file larger than any of these, the request will be rejected at that layer.
 
-| File | Setting | Default | Notes |
-|---|---|---|---|
-| `confs/php.ini` | `upload_max_filesize` | `50M` | Max size of a single uploaded file |
-| `confs/php.ini` | `post_max_size` | `60M` | Max size of the entire POST body (should be slightly larger than `upload_max_filesize` to account for other form fields) |
-| `confs/nginx/nginx.conf` | `client_max_body_size` | `50m` | Nginx will reject requests larger than this before PHP even sees them |
+
+| File                     | Setting                | Default | Notes                                                                                                                    |
+| ------------------------ | ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `confs/php.ini`          | `upload_max_filesize`  | `50M`   | Max size of a single uploaded file                                                                                       |
+| `confs/php.ini`          | `post_max_size`        | `60M`   | Max size of the entire POST body (should be slightly larger than `upload_max_filesize` to account for other form fields) |
+| `confs/nginx/nginx.conf` | `client_max_body_size` | `50m`   | Nginx will reject requests larger than this before PHP even sees them                                                    |
+
 
 **Content-Security-Policy** — In `confs/nginx/server-common.conf`, there is a commented-out `Content-Security-Policy` header. If your application uses iframes or is embedded by other domains, uncomment it and replace `*.allowed-domain.com` with your actual allowed origins:
 
@@ -166,6 +171,15 @@ Before deploying, make sure to review these configuration values and adjust them
 ```
 
 This file is included by both the PHP-FPM and Octane Nginx configs (`confs/nginx/php-fpm.conf` and `confs/nginx/octane.conf`), so the change applies everywhere.
+
+---
+
+## Swoole
+
+I recommend extending the octane command to set up a desired amount of workers.
+Auto mode will base itself on the machine's CPU availability, colliding with whatever sizing you prepared for the container.
+
+Issues of timeouts may appear especially on small machines due to extreme CPU splitting 
 
 ---
 
@@ -184,11 +198,11 @@ This file is included by both the PHP-FPM and Octane Nginx configs (`confs/nginx
 
 ### Quirks
 
-- **Composer + `php` binary** — There's an awkward issue where PHP is not properly referenced by Composer inside the FrankenPHP image. See: [Composer scripts referencing `php`](https://frankenphp.dev/docs/known-issues/#composer-scripts-referencing-php).
-- **`octane:frankenphp` vs `octane:serve`** — The FrankenPHP docs suggest running `php artisan octane:frankenphp` directly instead of `php artisan octane:serve --server=frankenphp`. While functionally identical, the former does not load configuration from the standard `config/octane.php` file.
+- **Composer + `php` binary** — There's an awkward issue where PHP is not properly referenced by Composer inside the FrankenPHP image. See: [Composer scripts referencing `php](https://frankenphp.dev/docs/known-issues/#composer-scripts-referencing-php)`.
+- `**octane:frankenphp` vs `octane:serve`** — The FrankenPHP docs suggest running `php artisan octane:frankenphp` directly instead of `php artisan octane:serve --server=frankenphp`. While functionally identical, the former does not load configuration from the standard `config/octane.php` file.
 - **Double web server debate** — [Laravel Forge](https://forge.laravel.com/) appears to run FrankenPHP behind Nginx, similar to other Octane providers. Using a double web server can mask bugs, so this project uses the [official Docker approach recommended in the Laravel docs](https://laravel.com/docs/12.x/octane#frankenphp-via-docker) instead. See also [this Octane issue](https://github.com/laravel/octane/issues/889) confirming Forge's Nginx setup.
 
-### Docker Compose Volumes
+### Compose Volumes
 
 The Caddy volumes below are **not** set by default, but they are needed in a single-server environment for HTTPS handling and other Caddy features:
 
@@ -199,12 +213,14 @@ The Caddy volumes below are **not** set by default, but they are needed in a sin
 
 ### What's Not Included
 
-| Feature | Reason |
-|---|---|
-| [Thread pool splitting](https://frankenphp.dev/docs/performance/#splitting-the-thread-pool) | Not configured — worth exploring for high-traffic workloads |
-| [X-Sendfile / large file serving](https://frankenphp.dev/docs/x-sendfile/) | Not needed in a Kubernetes setup where files are served from object storage |
-| Custom Caddyfile | Not included, but can be easily added by editing the `CMD` |
-| Additional Caddy modules | None are bundled in this project |
+
+| Feature                                                                                     | Reason                                                                      |
+| ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [Thread pool splitting](https://frankenphp.dev/docs/performance/#splitting-the-thread-pool) | Not configured — worth exploring for high-traffic workloads                 |
+| [X-Sendfile / large file serving](https://frankenphp.dev/docs/x-sendfile/)                  | Not needed in a Kubernetes setup where files are served from object storage |
+| Custom Caddyfile                                                                            | Not included, but can be easily added by editing the `CMD`                  |
+| Additional Caddy modules                                                                    | None are bundled in this project                                            |
+
 
 > Most performance-related configuration is handled by the Octane server itself. See: [FrankenPHP Performance docs](https://frankenphp.dev/docs/performance/).
 
@@ -212,9 +228,9 @@ The Caddy volumes below are **not** set by default, but they are needed in a sin
 
 ## TODO
 
-- [ ] Adopt [Pie](https://github.com/php/pie) (the new PHP extension installer) once the project matures further.
-- [ ] Test whether Alpine + musl is only problematic for FrankenPHP or affects other engines too.
-- [ ] Stress test to find optimal values in `convox.yml` (Kubernetes) and PHP-FPM/worker pool configurations.
+- Adopt [Pie](https://github.com/php/pie) (the new PHP extension installer) once the project matures further.
+- Test whether Alpine + musl is only problematic for FrankenPHP or affects other engines too.
+- Stress test to find optimal values in `convox.yml` (Kubernetes) and PHP-FPM/worker pool configurations.
 
 ---
 
@@ -237,3 +253,4 @@ This kills all FPM workers and respawns them with a clean OPcache state.
 - [Laravel Sail](https://github.com/laravel/sail)
 - [TrafeX/docker-php-nginx](https://github.com/TrafeX/docker-php-nginx)
 - [dunglas/symfony-docker](https://github.com/dunglas/symfony-docker)
+
