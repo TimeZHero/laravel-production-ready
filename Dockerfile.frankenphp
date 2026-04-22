@@ -33,6 +33,7 @@ WORKDIR /app
 #
 RUN apt-get update && apt-get install -y --no-install-recommends \
     npm \
+    git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -118,14 +119,15 @@ ENV PHP_BINARY=/usr/local/bin/php
 FROM ${ENGINE} AS production
 
 ARG USER
+ARG WWWUSER
 
 ENV OCTANE_HTTPS=true
 
 # Copy pre-built vendor from dependencies
-COPY --link --chown=${USER}:${USER} --from=dependencies /app/vendor vendor
+COPY --link --chown=${WWWUSER}:${WWWUSER} --from=dependencies /app/vendor vendor
 
 # Copy application source
-COPY --link --chown=${USER}:${USER} . .
+COPY --link --chown=${WWWUSER}:${WWWUSER} . .
 
 # Finalize: build frontend, run composer scripts, cleanup
 RUN npm ci; \
@@ -134,7 +136,7 @@ RUN npm ci; \
     composer dump-autoload --optimize --classmap-authoritative
 
 # Switch to non-root user for runtime
-USER ${USER}
+USER ${WWWUSER}
 
 # =============================================================================
 # Development
