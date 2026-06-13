@@ -1,0 +1,31 @@
+---
+description: Project context and key decisions
+alwaysApply: true
+---
+
+# Laravel Production-Ready Docker Images
+
+A reference/copy-paste repository providing stateless, performant Docker images for Laravel, designed for Kubernetes and deployed via Convox. Compatible with Laravel Sail for local development.
+
+## What This Is
+
+This is **not** a runnable application. It is a collection of Dockerfiles, configs, and scripts that users copy into their own Laravel projects. There is no Laravel app in this repo.
+
+## Supported Engines
+
+| Engine     | Dockerfile            | Proxy  | Notes                                    |
+| ---------- | --------------------- | ------ | ---------------------------------------- |
+| fpm        | `Dockerfile`          | nginx  | Traditional PHP-FPM behind nginx         |
+| roadrunner | `Dockerfile`          | nginx  | Octane + RoadRunner behind nginx          |
+| swoole     | `Dockerfile`          | nginx  | Octane + Swoole behind nginx              |
+| frankenphp | `Dockerfile.frankenphp` | Caddy  | Octane + FrankenPHP (official image, no nginx) |
+
+Each engine supports two build targets: `production` and `development`.
+
+## Key Decisions
+
+- **Alpine Linux** for nginx-based images (fpm, roadrunner, swoole). FrankenPHP uses Debian because musl libc is slower with PHP ZTS mode.
+- **supervisord** manages processes in nginx-based images (nginx, php-fpm/octane, queue worker, scheduler). FrankenPHP has no supervisor.
+- **No CI pipeline** — verification is done via a Cursor SKILL (`.cursor/skills/verify-docker-images/`) that builds all 8 image variants, starts containers, and runs a comprehensive checklist.
+- **Development images** don't bake in source code; they expect a bind-mount. Production images copy everything in.
+- **FrankenPHP** is exposed directly (no nginx proxy), unlike the other engines. Port remapped from 8000 to 8080 for consistency.
