@@ -24,8 +24,14 @@ Each engine supports two build targets: `production` and `development`.
 
 ## Key Decisions
 
-- **Alpine Linux** for nginx-based images (fpm, roadrunner, swoole). FrankenPHP uses Debian because musl libc is slower with PHP ZTS mode.
+- **Alpine Linux 3.24** for nginx-based images (fpm, roadrunner, swoole). FrankenPHP uses Debian because musl libc is slower with PHP ZTS mode.
 - **supervisord** manages processes in nginx-based images (nginx, php-fpm/octane, queue worker, scheduler). FrankenPHP has no supervisor.
 - **No CI pipeline** — verification is done via a Cursor SKILL (`.cursor/skills/verify-docker-images/`) that builds all 8 image variants, starts containers, and runs a comprehensive checklist.
 - **Development images** don't bake in source code; they expect a bind-mount. Production images copy everything in.
 - **FrankenPHP** is exposed directly (no nginx proxy), unlike the other engines. Port remapped from 8000 to 8080 for consistency.
+- **All processes run as non-root UID 1000** — nginx, php-fpm, octane, and supervisor all share the same UID. FPM socket ownership is left to the creating process (no `listen.owner`/`listen.group`) since everything runs as the same user.
+- **FrankenPHP ownership** — `/config` and `/data` (Caddy + XDG directories) are chowned to UID 1000. The FrankenPHP image sets `XDG_CONFIG_HOME=/config`, so PsySH and other XDG-aware tools write there.
+- **RoadRunner binary** — downloaded at build time for production, at startup for development (inside the container to match the Linux architecture).
+
+## Testing
+Testing must be performed using the skills defined in the project and any change must be implemented with some sort of TDD through the usage of the skill
