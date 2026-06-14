@@ -101,7 +101,9 @@ ARG COMPOSER_AUTH
 COPY --link composer.* .
 COPY --link packages/ packages/
 
-RUN composer install --no-cache --optimize-autoloader --no-interaction --no-dev --no-scripts --prefer-dist
+RUN --mount=type=cache,target=/tmp/composer-cache \
+    COMPOSER_CACHE_DIR=/tmp/composer-cache \
+    composer install --optimize-autoloader --no-interaction --no-dev --no-scripts --prefer-dist
 
 # =============================================================================
 # Php-fpm
@@ -183,11 +185,11 @@ RUN if [ "${ENGINE}" = "roadrunner" ]; then \
     fi
 
 # Build frontend, generate optimized autoload, cleanup
-RUN npm ci && \
+RUN --mount=type=cache,target=/tmp/npm-cache \
+    npm ci --cache /tmp/npm-cache && \
     npm run build && \
     rm -rf node_modules && \
     composer dump-autoload --optimize --classmap-authoritative && \
-    chown ${WWWUSER}:${WWWUSER} /app && \
     chown -R ${WWWUSER}:${WWWUSER} bootstrap/cache storage
 
 # Switch to non-root user for runtime
@@ -219,6 +221,8 @@ COPY --link confs/xdebug.ini /etc/php${PHP_VERSION}/conf.d/50_xdebug.ini
 # Copy supervisor programs for development
 COPY --link confs/supervisor.d/queue.conf /etc/supervisor.d/queue.conf
 COPY --link confs/supervisor.d/scheduler.conf /etc/supervisor.d/scheduler.conf
+# Vite dev server for HMR — remove if not using Vite or if it impacts performance
+COPY --link confs/supervisor.d/vite.conf /etc/supervisor.d/vite.conf
 
 # Switch to non-root user for runtime
 USER ${WWWUSER}

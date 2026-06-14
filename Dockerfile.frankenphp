@@ -106,7 +106,9 @@ ARG COMPOSER_AUTH
 
 COPY --link composer.* packages .
 
-RUN composer install --no-cache --optimize-autoloader --no-interaction --no-dev --no-scripts --prefer-dist
+RUN --mount=type=cache,target=/tmp/composer-cache \
+    COMPOSER_CACHE_DIR=/tmp/composer-cache \
+    composer install --optimize-autoloader --no-interaction --no-dev --no-scripts --prefer-dist
 
 # =============================================================================
 # FrankenPHP
@@ -124,7 +126,11 @@ FROM ${ENGINE} AS production
 
 ARG USER
 ARG WWWUSER
+ARG COMMIT_SHA
+ARG BRANCH
 
+ENV COMMIT_SHA=${COMMIT_SHA}
+ENV BRANCH=${BRANCH}
 ENV OCTANE_HTTPS=true
 
 # Copy pre-built vendor from dependencies
@@ -134,11 +140,11 @@ COPY --link --chown=${WWWUSER}:${WWWUSER} --from=dependencies /app/vendor vendor
 COPY --link --chown=${WWWUSER}:${WWWUSER} . .
 
 # Finalize: build frontend, run composer scripts, cleanup
-RUN npm ci; \
-    npm run build; \
-    rm -rf node_modules; \
-    composer dump-autoload --optimize --classmap-authoritative; \
-    chown ${WWWUSER}:${WWWUSER} /app; \
+RUN --mount=type=cache,target=/tmp/npm-cache \
+    npm ci --cache /tmp/npm-cache && \
+    npm run build && \
+    rm -rf node_modules && \
+    composer dump-autoload --optimize --classmap-authoritative && \
     chown -R ${WWWUSER}:${WWWUSER} bootstrap/cache storage
 
 # Switch to non-root user for runtime
@@ -163,6 +169,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends bash \
     && install-php-extensions xdebug \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Enable xdebug
+COPY --link confs/xdebug.ini ${PHP_INI_DIR}/conf.d/xdebug-config.ini
 
 # https://frankenphp.dev/docs/known-issues/#composer-scripts-referencing-php
 COPY --link --chmod=755 scripts/php.frankenphp.sh /usr/local/bin/php
