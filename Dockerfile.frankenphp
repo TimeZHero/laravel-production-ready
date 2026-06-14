@@ -56,6 +56,7 @@ RUN install-php-extensions \
     pcntl \
     bcmath \
     zip \
+    sockets \
     # Standard packages
     simplexml \
     xmlreader \
@@ -76,7 +77,10 @@ RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/bin/ 
     getent group ${USER} || groupadd ${USER}; \
     getent passwd ${USER} || useradd -u ${WWWUSER} -g ${USER} -m ${USER}; \
     setcap -r /usr/local/bin/frankenphp; \
-    chown -R ${USER}:${USER} /app /config/caddy /data/caddy
+    mkdir -p /home/${USER} && chown ${WWWUSER}:${WWWUSER} /home/${USER}; \
+    chown -R ${WWWUSER}:${WWWUSER} /app /config /data
+
+ENV HOME=/home/${USER}
 
 # Configure PHP
 COPY --link confs/php.ini ${PHP_INI_DIR}/conf.d/app.ini
@@ -133,7 +137,9 @@ COPY --link --chown=${WWWUSER}:${WWWUSER} . .
 RUN npm ci; \
     npm run build; \
     rm -rf node_modules; \
-    composer dump-autoload --optimize --classmap-authoritative
+    composer dump-autoload --optimize --classmap-authoritative; \
+    chown ${WWWUSER}:${WWWUSER} /app; \
+    chown -R ${WWWUSER}:${WWWUSER} bootstrap/cache storage
 
 # Switch to non-root user for runtime
 USER ${WWWUSER}
@@ -144,6 +150,7 @@ USER ${WWWUSER}
 FROM base AS development
 
 ARG USER
+ARG WWWUSER
 
 ENV OPCACHE_VALIDATE_TIMESTAMPS=1
 ENV OCTANE_HTTPS=false
@@ -162,7 +169,7 @@ COPY --link --chmod=755 scripts/php.frankenphp.sh /usr/local/bin/php
 ENV PHP_BINARY=/usr/local/bin/php
 
 # Switch to non-root user for runtime
-USER ${USER}
+USER ${WWWUSER}
 
 CMD ["php", "artisan", "octane:start", "--watch", "--server=frankenphp", "--port=8080"]
 
