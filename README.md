@@ -88,6 +88,13 @@ The two Docker Compose settings you want to configure are:
 | `build.target`      | `development`, `production`                 |
 | `build.args.ENGINE` | `fpm`, `swoole`, `roadrunner`, `frankenphp` |
 
+> **Important:** If you use an Octane engine (roadrunner, swoole, frankenphp), make sure you follow the [Octane installation instructions](https://laravel.com/docs/12.x/octane#installation). In particular, verify that `config/octane.php` sets `'server'` to your chosen engine:
+>
+> ```php
+> 'server' => env('OCTANE_SERVER', 'roadrunner'), // change default to match your engine
+> ```
+>
+> If this value doesn't match the engine used by the Docker image, running `php artisan` commands inside the container can trigger unexpected behavior (e.g. downloading the wrong binary or port conflicts).
 
 > **Which engine should I use?**
 >
@@ -194,7 +201,7 @@ Issues of timeouts may appear especially on small machines due to extreme CPU sp
 
 1. **Official image instead of Nginx proxy** — Unlike the other engines, FrankenPHP runs from the [official FrankenPHP Docker image](https://hub.docker.com/r/dunglas/frankenphp) instead of being proxied by Nginx.
 2. **Port mapping** — Octane is exposed directly on port `8000`. I remapped it to `8080` for compatibility with the rest of the setup, but this breaks the silent convention that Octane runs on `8000`.
-3. **No Alpine** — Alpine Linux images can't be used because [musl libc is slower with PHP ZTS mode](https://frankenphp.dev/docs/performance/#dont-use-musl).
+3. **No Alpine** — Alpine Linux images can't be used because [musl libc is slower with PHP ZTS mode](https://frankenphp.dev/docs/performance/#dont-use-musl). This only affects FrankenPHP because it requires ZTS (thread-safe) PHP. The other engines (FPM, RoadRunner, Swoole) run NTS (non-thread-safe) PHP, where musl's threading overhead is irrelevant.
 4. **No sidecar processes in development** — Since FrankenPHP is exposed directly, the additional dev commands (queue worker, scheduler) are not run alongside it the way they are for the other engines.
 
 ### Quirks
@@ -230,7 +237,6 @@ The Caddy volumes below are **not** set by default, but they are needed in a sin
 ## TODO
 
 - Adopt [Pie](https://github.com/php/pie) (the new PHP extension installer) once the project matures further.
-- Test whether Alpine + musl is only problematic for FrankenPHP or affects other engines too.
 - Stress test to find optimal values in `convox.yml` (Kubernetes) and PHP-FPM/worker pool configurations.
 
 ---
