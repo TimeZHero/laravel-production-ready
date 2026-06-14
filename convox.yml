@@ -51,13 +51,10 @@ services:
     port: 8080
     termination:
       grace: 45
-    timeout: 120
+    timeout: 60
     resources:
       - db
       - redis
-    deployment:
-      minimum: 50
-      maximum: 200
     scale:
       count: 1-30
       targets:
@@ -65,7 +62,7 @@ services:
         memory: 90
       cpu: 250
       memory: 1024
-      
+
   worker:
     build:
       manifest: Dockerfile
@@ -75,13 +72,10 @@ services:
       disable: true
     termination:
       grace: 45
-    timeout: 120
+    timeout: 60
     resources:
       - db
       - redis
-    deployment:
-      minimum: 50
-      maximum: 200
     scale:
       count: 1
       cpu: 250
