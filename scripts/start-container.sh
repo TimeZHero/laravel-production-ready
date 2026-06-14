@@ -36,7 +36,8 @@ if [ "${APP_ENV:-production}" = "production" ]; then
 
     echo "optimizing..."
     php artisan optimize
-    php artisan filament:optimize
+    # Uncomment if you use Filament (https://filamentphp.com)
+    # php artisan filament:optimize
 fi
 
 echo ">> Startup complete. Launching application..."
