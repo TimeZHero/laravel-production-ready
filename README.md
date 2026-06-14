@@ -236,7 +236,7 @@ The Caddy volumes below are **not** set by default, but they are needed in a sin
 
 ## TODO
 
-- Adopt [Pie](https://github.com/php/pie) (the new PHP extension installer) once the project matures further.
+- Adopt [PIE](https://github.com/php/pie) (the official PHP extension installer, replacing PECL) once upstream extensions release PHP 8.5-compatible versions. As of June 2026, igbinary, phpredis, and swoole do not compile against PHP 8.5 via PIE. Only xdebug works. Alpine `apk` packages and `install-php-extensions` apply patches that PIE does not.
 - Stress test to find optimal values in `convox.yml` (Kubernetes) and PHP-FPM/worker pool configurations.
 
 ---
