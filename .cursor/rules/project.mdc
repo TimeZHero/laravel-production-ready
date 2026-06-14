@@ -32,6 +32,12 @@ Each engine supports two build targets: `production` and `development`.
 - **All processes run as non-root UID 1000** — nginx, php-fpm, octane, and supervisor all share the same UID. FPM socket ownership is left to the creating process (no `listen.owner`/`listen.group`) since everything runs as the same user.
 - **FrankenPHP ownership** — `/config` and `/data` (Caddy + XDG directories) are chowned to UID 1000. The FrankenPHP image sets `XDG_CONFIG_HOME=/config`, so PsySH and other XDG-aware tools write there.
 - **RoadRunner binary** — downloaded at build time for production, at startup for development (inside the container to match the Linux architecture).
+- **php-fpm `catch_workers_output = no`** — intentional. PHP errors reach container logs via the FastCGI STDERR stream (`fastcgi.logging = On` by default). With `catch_workers_output = yes`, FPM additionally pipes worker output to its own error log, causing duplicate entries. The `no` setting avoids this duplication.
+- **npm and git in production images** — kept intentionally. They add ~30-40MB on Alpine but are useful for operational debugging when SSH'ing into running containers (e.g. `composer require`, `npm rebuild`).
+- **`--mount=type=cache`** — used for Composer and npm caches during build. Caches are mounted at build time but never written into image layers, keeping images smaller and speeding up repeat builds. Requires Docker BuildKit (already required by `COPY --link`).
+- **`filament:optimize`** — commented out in `start-container.sh`. Users of Filament should uncomment it. Without the guard, `set -eu` would crash container startup for any project not using Filament.
+- **Vite supervisor program** — included in development images (nginx-based only). Remove `confs/supervisor.d/vite.conf` COPY from the Dockerfile if not using Vite or if the extra process impacts dev performance.
+- **xdebug.ini** — contains `zend_extension=xdebug.so` and config directives (`xdebug.mode=debug`). Alpine's `php-xdebug` package does NOT auto-create a conf.d loader, so the `zend_extension` line is required. For FrankenPHP, `install-php-extensions` also loads xdebug — the duplicate `zend_extension` is harmless (PHP skips already-loaded extensions). Both Dockerfiles COPY the same config file.
 
 ## Testing
 Testing must be performed using the skills defined in the project and any change must be implemented with some sort of TDD through the usage of the skill
