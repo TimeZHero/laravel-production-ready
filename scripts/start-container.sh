@@ -17,6 +17,12 @@ if [ "${APP_ENV:-production}" = "local" ]; then
         echo "building assets..."
         npm run build
     fi
+
+    if [ "${OCTANE_SERVER:-}" = "roadrunner" ] && [ -f "vendor/bin/rr" ] && [ ! -f "rr" ]; then
+        echo "downloading RoadRunner binary..."
+        ./vendor/bin/rr get-binary --no-interaction --no-config --quiet
+        chmod +x rr
+    fi
 fi
 
 # --isolated uses cache locks; fall back to non-isolated if the cache table doesn't exist yet
