@@ -76,7 +76,53 @@ docker run --rm -v "$TMPDIR:/app" -w /app composer:latest \
     sh -c "composer require -W --ignore-platform-reqs laravel/octane spiral/roadrunner-cli spiral/roadrunner-http --no-interaction"
 ```
 
-### 6. Create the .env file
+### 6. Register the dev commands
+
+Create `$TMPDIR/app/Providers/DevServiceProvider.php` with the registrations from
+the README's "Development Processes" section:
+
+```php
+<?php
+
+namespace App\Providers;
+
+use Illuminate\Foundation\DevCommands;
+use Illuminate\Support\ServiceProvider;
+
+class DevServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        if (! $this->app->environment('local')) {
+            return;
+        }
+
+        $engine = env('OCTANE_SERVER');
+
+        if ($engine) {
+            $port = env('OCTANE_PORT', 8000);
+            DevCommands::artisan("octane:start --watch --server={$engine} --port={$port}", 'server');
+        } else {
+            DevCommands::register('php-fpm -F 2>&1 | cat', 'server');
+        }
+
+        DevCommands::artisan('schedule:work', 'scheduler');
+    }
+}
+```
+
+Then edit `$TMPDIR/bootstrap/providers.php` so it returns:
+
+```php
+<?php
+
+return [
+    App\Providers\AppServiceProvider::class,
+    App\Providers\DevServiceProvider::class,
+];
+```
+
+### 7. Create the .env file
 
 Write to `$TMPDIR/.env`:
 
@@ -92,7 +138,7 @@ CACHE_STORE=array
 QUEUE_CONNECTION=sync
 ```
 
-### 7. Create the packages directory
+### 8. Create the packages directory
 
 ```bash
 mkdir -p "$TMPDIR/packages"
@@ -100,15 +146,33 @@ mkdir -p "$TMPDIR/packages"
 
 The Dockerfile's `COPY` expects this directory to exist.
 
-### 8. Install npm dependencies
+### 9. Install npm dependencies
+
+Install them **inside a Linux container**, not on the host — otherwise
+`node_modules` (bind-mounted into the dev containers) contains macOS native
+bindings (e.g. rolldown/esbuild) and the Vite dev server crash-loops with
+"Cannot find native binding". This also mirrors real usage, where
+`start-container.sh` runs `npm install` inside the container on first boot.
+
+The libc must match the image family — one `node_modules` cannot serve both:
+
+- **nginx-based dev containers** (Alpine/musl): install with `node:24-alpine`
+- **frankenphp dev container** (Debian/glibc): install with `node:24-slim`
 
 ```bash
-cd "$TMPDIR" && npm install && npm install --save-dev chokidar
+# For the nginx-based dev containers (default — do this one first)
+docker run --rm -v "$TMPDIR:/app" -w /app node:24-alpine \
+    sh -c "npm install && npm install --save-dev chokidar"
 ```
+
+To verify Vite in the frankenphp development container as well, reinstall with
+`node:24-slim` and restart only that container (`docker restart
+lpr-test-frankenphp-development`). Reinstall with `node:24-alpine` afterwards
+if further checks on the nginx-based dev containers are needed.
 
 `chokidar` is needed for Octane's `--watch` flag in development.
 
-### 9. Patch start-container.sh
+### 10. Patch start-container.sh
 
 In `$TMPDIR/scripts/start-container.sh`, make two replacements so the container doesn't fail on missing DB or missing Filament:
 
@@ -117,7 +181,7 @@ In `$TMPDIR/scripts/start-container.sh`, make two replacements so the container 
 | `php artisan migrate --force --isolated`   | `php artisan migrate --force --isolated 2>/dev/null \|\| true` |
 | `php artisan filament:optimize`            | `php artisan filament:optimize 2>/dev/null \|\| true`        |
 
-### 10. Build all 8 images
+### 11. Build all 8 images
 
 Build nginx-based images (fpm, roadrunner, swoole) from `Dockerfile`:
 
@@ -146,7 +210,7 @@ done
 
 If any build fails, record it and continue building the rest.
 
-### 11. Start all containers
+### 12. Start all containers
 
 **Runtime environment variables** (used for every container):
 
@@ -200,7 +264,7 @@ docker run -d --name "lpr-test-ENGINE-development" \
 
 Note the differences for development: `APP_ENV=local`, `HOME=/tmp`, and the bind-mount volume.
 
-### 12. Wait for containers to become healthy
+### 13. Wait for containers to become healthy
 
 Poll each container until the health check passes (the Dockerfiles define a `HEALTHCHECK`):
 
@@ -212,7 +276,15 @@ Repeat every 3 seconds, up to 120 seconds total. Expected value: `healthy`.
 
 If a container exits or doesn't become healthy within 120 seconds, record it as failed, inspect logs with `docker logs CONTAINER_NAME`, and move on.
 
-### 13. Get the mapped host port
+Known harness artifact: all development containers share the same bind-mounted
+`/app`, and both RoadRunner and Swoole write their state to
+`storage/framework/octane-server-state.json`. One engine's state file can make
+the other engine's `octane:start` abort with "server is already running" (the
+recorded pid usually exists in the other container's namespace too). Fix:
+delete `storage/framework/octane-server-state.json` and restart the affected
+container. Not a repo bug — real projects run a single dev container.
+
+### 14. Get the mapped host port
 
 Each container maps port 8080 to a random host port:
 
@@ -338,7 +410,9 @@ For **frankenphp-development** (1 container):
 | # | Check | Applies to | Command | Expected |
 |---|-------|-----------|---------|----------|
 | I1 | OCTANE_HTTPS=false | roadrunner-development, swoole-development, frankenphp-development (3 containers) | `docker exec CONTAINER env \| grep OCTANE_HTTPS` | `OCTANE_HTTPS=false` |
-| I2 | --watch flag present | roadrunner-development, swoole-development (2 containers, **not** frankenphp) | `docker exec CONTAINER env \| grep OCTANE_OPTIONS` | Contains `--watch` |
+| I2 | --watch flag present | roadrunner-development, swoole-development, frankenphp-development (3 containers) | `docker exec CONTAINER ps aux` (frankenphp: use the /proc command from section M) | Process list contains `octane:start --watch` |
+| I3 | OCTANE_PORT declared | roadrunner-development, swoole-development (2 containers) | `docker exec CONTAINER env \| grep OCTANE_PORT` | `OCTANE_PORT=8000` |
+| I4 | OCTANE_PORT declared | frankenphp-development | `docker exec CONTAINER env \| grep OCTANE_PORT` | `OCTANE_PORT=8080` |
 
 ---
 
@@ -361,18 +435,30 @@ Verify using `ps aux` inside the container.
 | K3 | Engine process running | roadrunner-production, swoole-production | Same ps output | Contains `octane` |
 | K4 | No queue worker | fpm-production, roadrunner-production, swoole-production | Same ps output | Does **not** contain `queue:work` |
 | K5 | No scheduler | fpm-production, roadrunner-production, swoole-production | Same ps output | Does **not** contain `schedule:` |
+| K6 | No dev multiplexer | fpm-production, roadrunner-production, swoole-production | Same ps output | Does **not** contain `artisan dev` |
+| K7 | Engine under supervisord | fpm-production | `docker exec CONTAINER ls /etc/supervisor.d/` | Contains `php-fpm.conf` |
+| K8 | Engine under supervisord | roadrunner-production, swoole-production | `docker exec CONTAINER ls /etc/supervisor.d/` | Contains `octane.conf` |
 
 ---
 
 ### L. Processes — Nginx-Based Development
+
+In development, supervisord runs **only nginx**. The app server (php-fpm or
+octane) and the sidecars (queue listener, scheduler, Vite, Pail) are all
+managed by `php artisan dev` — consistent across engines.
 
 | # | Check | Applies to | Command | Expected |
 |---|-------|-----------|---------|----------|
 | L1 | nginx running | fpm-development, roadrunner-development, swoole-development | `docker exec CONTAINER ps aux` | Output contains `nginx` |
 | L2 | Engine process running | fpm-development | Same ps output | Contains `php-fpm` |
 | L3 | Engine process running | roadrunner-development, swoole-development | Same ps output | Contains `octane` |
-| L4 | Queue worker running | fpm-development, roadrunner-development, swoole-development | Same ps output | Contains `queue:work` |
-| L5 | Scheduler running | fpm-development, roadrunner-development, swoole-development | Same ps output | Contains `schedule:` |
+| L4 | Dev multiplexer running | fpm-development, roadrunner-development, swoole-development | Same ps output | Contains `artisan dev` |
+| L5 | Queue listener running | fpm-development, roadrunner-development, swoole-development | Same ps output | Contains `queue:listen` |
+| L6 | Scheduler running | fpm-development, roadrunner-development, swoole-development | Same ps output | Contains `schedule:work` |
+| L7 | Vite dev server running | fpm-development, roadrunner-development, swoole-development | Same ps output | Contains `vite` |
+| L8 | Log tailing running | fpm-development, roadrunner-development, swoole-development | Same ps output | Contains `pail` |
+| L9 | No default dev server | fpm-development, roadrunner-development, swoole-development | Same ps output | Does **not** contain `artisan serve` (the provider replaces the default `server` process with the engine) |
+| L10 | Engine not under supervisord | fpm-development, roadrunner-development, swoole-development | `docker exec CONTAINER ls /etc/supervisor.d/` | Contains `nginx.conf` and `dev.conf`; does **not** contain `php-fpm.conf` or `octane.conf` |
 
 ---
 
@@ -389,6 +475,19 @@ docker exec CONTAINER sh -c 'for f in /proc/[0-9]*/cmdline; do tr "\0" " " < "$f
 | M1 | Octane/FrankenPHP running | frankenphp-production, frankenphp-development | See proc command above | Output contains `octane` or `frankenphp` |
 | M2 | No nginx | frankenphp-production, frankenphp-development | Same output | Does **not** contain `nginx` |
 | M3 | No supervisord | frankenphp-production, frankenphp-development | Same output | Does **not** contain `supervisord` |
+| M4 | Dev multiplexer + sidecars | frankenphp-development | Same output | Contains `artisan dev`, `queue:listen` and `schedule:work` (FrankenPHP has no supervisord, so `artisan dev` is the container command and Octane itself runs as a dev process) |
+| M5 | No dev multiplexer | frankenphp-production | Same output | Does **not** contain `artisan dev` |
+
+---
+
+### N. Node.js Version (multiplex floor)
+
+`php artisan dev` runs through `@laravel/multiplex`, which requires Node.js
+**v22.13 or later**. Verify every development image meets the floor.
+
+| # | Check | Applies to | Command | Expected |
+|---|-------|-----------|---------|----------|
+| N1 | Node.js version | all 4 development containers | `docker exec CONTAINER node --version` | `v22.13.0` or higher |
 
 ---
 
