@@ -14,7 +14,7 @@ Compatible with [Laravel Sail](https://github.com/laravel/sail) for local develo
   - [Local Packages](#local-packages)
   - [Compose & Convox](#compose--convox)
   - [Redis](#redis)
-  - [Vite](#vite)
+  - [Development Processes (`php artisan dev`)](#development-processes-php-artisan-dev)
 - [Environment Variables](#environment-variables)
 - [Things to Review](#things-to-review)
 - [Swoole](#swoole)
@@ -57,6 +57,8 @@ chmod +x sail
 ```bash
 alias sail='bash $([ -f sail ] && echo sail || echo vendor/bin/sail)'
 ```
+
+1. Create a `DevServiceProvider` and register it in `bootstrap/providers.php` — see [Development Processes](#development-processes-php-artisan-dev).
 
 ---
 
@@ -123,11 +125,45 @@ The image ships with [igbinary](https://github.com/igbinary/igbinary) and [lz4](
 ],
 ```
 
-### Vite
+### Development Processes (`php artisan dev`)
 
-The program to run `npm run dev` is **not enabled by default** because of the performance overhead it introduces. Depending on your project, you may not want it running all the time.
+In the **development** images, [`php artisan dev`](https://laravel.com/docs/artisan#the-dev-command) runs the app server *and* the sidecar processes — queue listener, scheduler, Vite dev server and Pail log tailing. The only thing left under supervisord is nginx, the one piece of infrastructure `artisan dev` can't replace (FrankenPHP images have neither nginx nor supervisord, so `php artisan dev` is simply the container command).
 
-To enable it, copy the unused Vite supervisor program from the Dockerfile's development stage into your active supervisord configs — or simply run `npm run dev` manually whenever you need it.
+Which processes `artisan dev` starts is defined in your application, not in the image. Create a `DevServiceProvider`, register it in `bootstrap/providers.php`, and register the dev commands in its `boot()` — including any other your project needs (`reverb:start`, `horizon:listen`, `stripe listen ...`):
+
+```php
+use Illuminate\Foundation\DevCommands;
+
+if ($this->app->environment('local')) {
+    $engine = env('OCTANE_SERVER');
+
+    if ($engine) {
+        $port = env('OCTANE_PORT', 8000);
+        DevCommands::artisan("octane:start --watch --server={$engine} --port={$port}", 'server');
+    } else {
+        DevCommands::register('php-fpm -F 2>&1 | cat', 'server');
+    }
+
+    DevCommands::artisan('schedule:work', 'scheduler');
+}
+```
+
+The `server` name replaces the framework's default `php artisan serve` process. The port comes from the image's `OCTANE_PORT` env: 8000 behind nginx (roadrunner/swoole, where nginx owns 8080), 8080 when exposed directly (frankenphp). `env()` is deliberate here: the image sets `OCTANE_SERVER`/`OCTANE_PORT`, and `config/octane.php` may not exist in non-Octane projects.
+
+The `| cat` after php-fpm is required, not decorative: php-fpm opens its `error_log` (`/dev/stderr`) as a *path*, which fails when stderr is a socket — as it is under `@laravel/multiplex`. The pipe turns stderr into a pipe, which `/dev/stderr` can open.
+
+The framework defaults kept are the queue listener (`queue:listen`), Vite (`npm run dev`) and Pail. Drop one with `DevCommands::except()` — e.g. `DevCommands::except('vite')` if the project has no frontend.
+
+**Requirements:**
+
+- Laravel **13.16+** for `php artisan dev` — **13.25+ recommended**, since it auto-selects plain inline output when there is no TTY (containers, supervisord, CI) and restarts crashed processes automatically.
+- Node.js **≥ 22.13** in the image — already covered: Alpine ships Node 24, and the FrankenPHP image copies Node 24 from the official `node` image (Debian 13 apt pins Node at 20.x).
+
+**Notes:**
+
+- Keep the `VITE_PORT` mapping in `compose.yaml` while Vite is enabled: the browser still needs to reach the dev server for HMR.
+- Since the Vite dev server always serves assets locally, `start-container.sh` no longer runs `npm run build` on first boot.
+- On Laravel ≤ 12 there is no `artisan dev` — pin to an older revision of this repository if you need the old per-process supervisor programs.
 
 ---
 
@@ -202,7 +238,8 @@ Issues of timeouts may appear especially on small machines due to extreme CPU sp
 1. **Official image instead of Nginx proxy** — Unlike the other engines, FrankenPHP runs from the [official FrankenPHP Docker image](https://hub.docker.com/r/dunglas/frankenphp) instead of being proxied by Nginx.
 2. **Port mapping** — Octane is exposed directly on port `8000`. I remapped it to `8080` for compatibility with the rest of the setup, but this breaks the silent convention that Octane runs on `8000`.
 3. **No Alpine** — Alpine Linux images can't be used because [musl libc is slower with PHP ZTS mode](https://frankenphp.dev/docs/performance/#dont-use-musl). This only affects FrankenPHP because it requires ZTS (thread-safe) PHP. The other engines (FPM, RoadRunner, Swoole) run NTS (non-thread-safe) PHP, where musl's threading overhead is irrelevant.
-4. **No sidecar processes in development** — Since FrankenPHP is exposed directly, the additional dev commands (queue worker, scheduler) are not run alongside it the way they are for the other engines.
+4. **No supervisord** — Since FrankenPHP is exposed directly, there is no nginx and no process supervisor in the image. Development works exactly like the other engines minus nginx: `php artisan dev` is the container command and runs Octane plus the sidecars.
+5. **Node.js from the official image** — Debian 13 (trixie) apt pins Node at 20.x, but `@laravel/multiplex` (which runs `php artisan dev`) requires ≥ 22.13. The image copies Node 24 from `node:24-trixie-slim` instead of installing the apt package.
 
 ### Quirks
 

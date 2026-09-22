@@ -25,10 +25,15 @@ Each engine supports two build targets: `production` and `development`.
 ## Key Decisions
 
 - **Alpine Linux 3.24** for nginx-based images (fpm, roadrunner, swoole). FrankenPHP uses Debian because musl libc is slower with PHP ZTS mode.
-- **supervisord** manages processes in nginx-based images (nginx, php-fpm/octane, queue worker, scheduler). FrankenPHP has no supervisor.
+- **supervisord** manages processes in nginx-based images. In production: nginx + php-fpm/octane. In development: nginx only, plus a single `dev` program running `php artisan dev` — the app server (php-fpm/octane) and the sidecars (queue listener, scheduler, Vite, Pail) are all dev processes, consistent across engines. The engine supervisor confs inherited from the engine stage are removed in the development stage (`RUN rm`).
+- **`php artisan dev` for dev sidecars** — requires Laravel 13.16+ (13.25+ recommended: auto-selects inline output without a TTY) and Node >= 22.13 (`@laravel/multiplex` floor). Which processes run is defined in the app (a `DevServiceProvider` — snippet in the README's "Development Processes" section), not in the image.
+- **FrankenPHP has no supervisord** — in development `php artisan dev` is the container CMD (same as every engine, just without nginx). Production CMD is still `octane:start` directly.
+- **php-fpm under multiplex needs `2>&1 | cat`** — php-fpm opens its `error_log` (`/dev/stderr`) as a path, which fails with ENXIO when stderr is a unix socket (Node `spawn` uses socketpairs for stdio). The pipe makes stderr a pipe, which `/dev/stderr` can open. Safe because multiplex spawns with `detached: true` and signals the whole process group. `-O`/`--force-stderr` does NOT help (the error_log open happens at config time regardless).
+- **Node.js in the FrankenPHP image** — copied from `node:24-trixie-slim` (`COPY --from`, replaces the apt `npm` package) because Debian 13 apt pins Node at 20.x, below the multiplex floor. Alpine images need nothing: Alpine 3.24 ships Node 24.
 - **No CI pipeline** — verification is done via a Cursor SKILL (`.cursor/skills/verify-docker-images/`) that builds all 8 image variants, starts containers, and runs a comprehensive checklist.
 - **Development images** don't bake in source code; they expect a bind-mount. Production images copy everything in.
 - **FrankenPHP** is exposed directly (no nginx proxy), unlike the other engines. Port remapped from 8000 to 8080 for consistency.
+- **`OCTANE_PORT` env** — declared per image (8000 in the nginx-based octane stage, since nginx owns 8080; 8080 in the FrankenPHP image). Consumed by the production `octane.conf` supervisor program and by the app's DevServiceProvider snippet. The FrankenPHP production CMD keeps `--port=8080` hardcoded (exec form can't expand env vars).
 - **All processes run as non-root UID 1000** — nginx, php-fpm, octane, and supervisor all share the same UID. FPM socket ownership is left to the creating process (no `listen.owner`/`listen.group`) since everything runs as the same user.
 - **FrankenPHP ownership** — `/config` and `/data` (Caddy + XDG directories) are chowned to UID 1000. The FrankenPHP image sets `XDG_CONFIG_HOME=/config`, so PsySH and other XDG-aware tools write there.
 - **RoadRunner binary** — downloaded at build time for production, at startup for development (inside the container to match the Linux architecture).
@@ -36,7 +41,9 @@ Each engine supports two build targets: `production` and `development`.
 - **npm and git in production images** — kept intentionally. They add ~30-40MB on Alpine but are useful for operational debugging when SSH'ing into running containers (e.g. `composer require`, `npm rebuild`).
 - **`--mount=type=cache`** — used for Composer and npm caches during build. Caches are mounted at build time but never written into image layers, keeping images smaller and speeding up repeat builds. Requires Docker BuildKit (already required by `COPY --link`).
 - **`filament:optimize`** — commented out in `start-container.sh`. Users of Filament should uncomment it. Without the guard, `set -eu` would crash container startup for any project not using Filament.
-- **Vite supervisor program** — included in development images (nginx-based only). Remove `confs/supervisor.d/vite.conf` COPY from the Dockerfile if not using Vite or if the extra process impacts dev performance.
+- **Vite dev server** — always runs in development via `artisan dev`. To disable it in a project, use `DevCommands::except('vite')` in the app's DevServiceProvider — no Dockerfile change needed.
+- **No `npm run build` at container start** — `start-container.sh` only runs `npm install` in local; assets are served by the Vite dev server. Production builds happen at image build time.
+- **No `tty: true` in compose.yaml** — container processes run under supervisord (or `artisan dev` for FrankenPHP) and never have a TTY; `docker compose exec` allocates its own.
 - **xdebug.ini** — contains `zend_extension=xdebug.so` and config directives (`xdebug.mode=debug`). Alpine's `php-xdebug` package does NOT auto-create a conf.d loader, so the `zend_extension` line is required. For FrankenPHP, `install-php-extensions` also loads xdebug — the duplicate `zend_extension` is harmless (PHP skips already-loaded extensions). Both Dockerfiles COPY the same config file.
 
 ## Testing
