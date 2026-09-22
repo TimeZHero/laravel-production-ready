@@ -131,6 +131,7 @@ ARG ENGINE
 
 ENV OCTANE_SERVER=${ENGINE}
 ENV OCTANE_OPTIONS=""
+ENV OCTANE_PORT=8000
 
 # Octane requires sockets and posix (for posix_kill)
 RUN apk add --no-cache \
@@ -207,7 +208,6 @@ ARG USER
 ENV SUPERVISOR_AUTORESTART=true
 ENV OPCACHE_VALIDATE_TIMESTAMPS=1
 ENV OCTANE_HTTPS=false
-ENV OCTANE_OPTIONS="--watch"
 
 # Install dev-only packages
 RUN apk --no-cache add \
@@ -218,11 +218,9 @@ RUN apk --no-cache add \
 # Enable xdebug
 COPY --link confs/xdebug.ini /etc/php${PHP_VERSION}/conf.d/50_xdebug.ini
 
-# Copy supervisor programs for development
-COPY --link confs/supervisor.d/queue.conf /etc/supervisor.d/queue.conf
-COPY --link confs/supervisor.d/scheduler.conf /etc/supervisor.d/scheduler.conf
-# Vite dev server for HMR — remove if not using Vite or if it impacts performance
-COPY --link confs/supervisor.d/vite.conf /etc/supervisor.d/vite.conf
+# Engine runs under artisan dev in development
+RUN rm -f /etc/supervisor.d/php-fpm.conf /etc/supervisor.d/octane.conf
+COPY --link confs/supervisor.d/dev.conf /etc/supervisor.d/dev.conf
 
 # Switch to non-root user for runtime
 USER ${WWWUSER}

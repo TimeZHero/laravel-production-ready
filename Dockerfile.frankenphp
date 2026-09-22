@@ -32,10 +32,12 @@ WORKDIR /app
 # - Laravel requirements: https://laravel.com/docs/master/deployment#server-requirements
 #
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    npm \
     git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Debian 13 pins Node at 20.19, but @laravel/multiplex (php artisan dev) needs >= 22.13
+COPY --from=node:24-trixie-slim /usr/local/ /usr/local/
 
 # Install PHP extensions
 RUN install-php-extensions \
@@ -81,6 +83,8 @@ RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/bin/ 
     chown -R ${WWWUSER}:${WWWUSER} /app /config /data
 
 ENV HOME=/home/${USER}
+ENV OCTANE_SERVER=frankenphp
+ENV OCTANE_PORT=8080
 
 # Configure PHP
 COPY --link confs/php.ini ${PHP_INI_DIR}/conf.d/app.ini
@@ -180,7 +184,7 @@ ENV PHP_BINARY=/usr/local/bin/php
 # Switch to non-root user for runtime
 USER ${WWWUSER}
 
-CMD ["php", "artisan", "octane:start", "--watch", "--server=frankenphp", "--port=8080"]
+CMD ["php", "artisan", "dev"]
 
 # =============================================================================
 # Default target

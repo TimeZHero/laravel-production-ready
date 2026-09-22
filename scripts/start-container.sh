@@ -13,9 +13,6 @@ if [ "${APP_ENV:-production}" = "local" ]; then
     if [ ! -d "node_modules" ]; then
         echo "node_modules not found, running npm install..."
         npm install
-        
-        echo "building assets..."
-        npm run build
     fi
 
     if [ "${OCTANE_SERVER:-}" = "roadrunner" ] && [ -f "vendor/bin/rr" ] && [ ! -f "rr" ]; then
