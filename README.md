@@ -1,21 +1,23 @@
 # Production-Ready Docker Images for Laravel
 
-Stateless, performant Docker images designed for Kubernetes — deployed via [Convox](https://convox.com/).
+Stateless, performant Laravel images designed for Kubernetes and deployed via [Convox](https://convox.com/).
 
-Compatible with [Laravel Sail](https://github.com/laravel/sail) for local development.
+Includes an ideal local environment by leveraging [Laravel Sail](https://github.com/laravel/sail) and tries to address its known minor issues.
+
+**Local development is opinionated towards MacOS**, optimized for both simplicity and parity with the production environment.
 
 ---
 
 ## Table of Contents
 
-- [Local Setup](#local-setup)
 - [Usage](#usage)
+  - [Development](#development)
   - [Editor Files](#editor-files)
   - [Local Packages](#local-packages)
   - [Compose & Convox](#compose--convox)
   - [Redis](#redis)
-  - [Development Processes (`php artisan dev`)](#development-processes-php-artisan-dev)
 - [Environment Variables](#environment-variables)
+- [Trusted Proxies](#trusted-proxies)
 - [Things to Review](#things-to-review)
 - [Swoole](#swoole)
 - [FrankenPHP](#frankenphp)
@@ -29,9 +31,17 @@ Compatible with [Laravel Sail](https://github.com/laravel/sail) for local develo
 
 ---
 
-## Local Setup
+## Usage
 
-1. Install [Laravel Sail](https://laravel.com/docs/12.x/sail) in your project and publish the assets.
+This repository is **not interactive**. All operations are done through copy-paste and by reviewing configuration files for your specific use case.
+
+Copy the `Dockerfile` (or `Dockerfile.frankenphp`) into your project and adjust as needed.
+
+### Development
+
+#### Sail Setup
+
+1. Install [Laravel Sail](https://laravel.com/framework/docs/master/sail) in your project and publish the assets.
 2. Publish the Sail binary. This lets new developers skip running `composer install` right after cloning just to get Sail working. It should be updated every time the Sail version is updated.
 
 ```bash
@@ -39,7 +49,7 @@ php artisan vendor:publish --provider="Laravel\\Sail\\SailServiceProvider" --tag
 chmod +x sail
 ```
 
-1. Add this to your `composer.json` to automate updating the binary on every `composer update`:
+3. Add this to your `composer.json` to automate updating the binary on every `composer update`:
 
 ```json
 {
@@ -52,21 +62,85 @@ chmod +x sail
 }
 ```
 
-1. Update the alias in your shell config (`~/.zshrc` for Zsh, `~/.bashrc` for Bash) so it picks up the local binary when available:
+4. Update the alias in your shell config (`~/.zshrc` for Zsh, `~/.bashrc` for Bash) so it picks up the local binary when available:
 
 ```bash
 alias sail='bash $([ -f sail ] && echo sail || echo vendor/bin/sail)'
 ```
 
-1. Create a `DevServiceProvider` and register it in `bootstrap/providers.php` — see [Development Processes](#development-processes-php-artisan-dev).
+#### Dev Processes
 
----
+The dev command is [`php artisan dev`](https://laravel.com/docs/artisan#the-dev-command), automatically running queue, scheduler, Vite dev server and Pail log tailing.
 
-## Usage
+Create a `DevServiceProvider`, register it in `bootstrap/providers.php`, and register whatever your project needs in `boot()` (`reverb:start`, `horizon:listen`, `stripe listen ...`)
 
-This repository is **not interactive**. All operations are done through copy-paste and by reviewing configuration files for your specific use case.
+The following configuration is compatible for whatever engine (PHP runtime) you decide to use. Feel free to simplify it if you do not want to support all engines in your code
 
-Copy the `Dockerfile` (or `Dockerfile.frankenphp`) into your project and adjust as needed.
+```php
+use Illuminate\Foundation\DevCommands;
+
+if ($this->app->environment('local')) {
+    $engine = env('OCTANE_SERVER');
+
+    if ($engine) {
+        $port = env('OCTANE_PORT', 8000);
+        DevCommands::artisan("octane:start --watch --server={$engine} --port={$port}", 'server');
+    } else {
+        // | cat: php-fpm can't open /dev/stderr when stderr is a socket (multiplex)
+        DevCommands::register('php-fpm -F 2>&1 | cat', 'server');
+    }
+
+    DevCommands::artisan('schedule:work', 'scheduler');
+}
+```
+
+The `server` registration overrides the framework's default single-threaded `php artisan serve`.
+
+#### Local Domains & HTTPS
+
+The app will use a real domain with HTTPS via a single shared [caddy-docker-proxy](https://github.com/lucaslorentz/caddy-docker-proxy) per machine. We prefer this over the nginx one due to ease of SSL cert.
+
+Always use `.localhost` over other domains due to free local host resolution
+
+1. Add the following to your `~/.zshrc` / `~/.bashrc`. **This may collide with the local Caddy CLI if you have it installed**
+
+```bash
+caddy() {
+    case "$1" in
+        create)
+            docker network create caddy 2>/dev/null
+            docker run -d --name caddy --restart unless-stopped --network caddy \
+                -p 80:80 -p 443:443 -p 443:443/udp \
+                -e CADDY_INGRESS_NETWORKS=caddy \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                -v caddy_data:/data \
+                -l caddy=proxy.localhost -l caddy.respond=OK \
+                lucaslorentz/caddy-docker-proxy:ci-alpine
+            ;;
+        trust)
+            docker cp caddy:/data/caddy/pki/authorities/local/root.crt /tmp/caddy-root.crt \
+                && security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db /tmp/caddy-root.crt \
+                && rm /tmp/caddy-root.crt
+            ;;
+        *)
+            docker "$@" caddy
+            ;;
+    esac
+}
+```
+
+2. Once per machine: `caddy create`, then `caddy trust` to trust the root certificate. Any other command (`caddy start`, `caddy stop`, `caddy logs`) is proxied over to the docker container. You only need to start it once per machine, not per-project.
+3. Merge this repo's `compose.yaml` example into your project's compose file and **delete the `ports` mappings** — the proxy replaces them. `APP_URL`, `SESSION_DOMAIN` and `VITE_DEV_SERVER_URL` are injected from the project folder name; container env wins over `.env`, so there's nothing to set.
+4. Point Vite at the injected URL in `vite.config.js` — without it the `hot` file defaults to `http://localhost:5173`, which is no longer published:
+
+```js
+server: { origin: process.env.VITE_DEV_SERVER_URL },
+```
+
+5. `sail up -d` — then open `https://<folder>.localhost`. 🎉
+6. Multiple subdomains support: add them to the `caddy` label separated by `', '` (Caddy rejects a comma without space) and point the compose `APP_URL` line at the canonical one.
+7. Other HTTP services (Mailpit, MinIO console, …) get plain `caddy` labels on their own service, with the hostname prefixed by the service name — e.g. on the mailpit service: `caddy: 'mailpit.${COMPOSE_PROJECT_NAME}.localhost'` + `caddy.reverse_proxy: '{{upstreams 8025}}'`. The `caddy_1`/`caddy_2` index is per-container — only needed when one service serves multiple domains, like the app container's Vite group.
+8. This is compatible with worktrees in order to quickly launch separate clone environments
 
 ### Editor Files
 
@@ -90,7 +164,7 @@ The two Docker Compose settings you want to configure are:
 | `build.target`      | `development`, `production`                 |
 | `build.args.ENGINE` | `fpm`, `swoole`, `roadrunner`, `frankenphp` |
 
-> **Important:** If you use an Octane engine (roadrunner, swoole, frankenphp), make sure you follow the [Octane installation instructions](https://laravel.com/docs/12.x/octane#installation). In particular, verify that `config/octane.php` sets `'server'` to your chosen engine:
+> **Important:** If you use an Octane engine (roadrunner, swoole, frankenphp), make sure you follow the [Octane installation instructions](https://laravel.com/framework/docs/master/octane#installation). In particular, verify that `config/octane.php` sets `'server'` to your chosen engine:
 >
 > ```php
 > 'server' => env('OCTANE_SERVER', 'roadrunner'), // change default to match your engine
@@ -125,63 +199,24 @@ The image ships with [igbinary](https://github.com/igbinary/igbinary) and [lz4](
 ],
 ```
 
-### Development Processes (`php artisan dev`)
-
-In the **development** images, [`php artisan dev`](https://laravel.com/docs/artisan#the-dev-command) runs the app server *and* the sidecar processes — queue listener, scheduler, Vite dev server and Pail log tailing. The only thing left under supervisord is nginx, the one piece of infrastructure `artisan dev` can't replace (FrankenPHP images have neither nginx nor supervisord, so `php artisan dev` is simply the container command).
-
-Which processes `artisan dev` starts is defined in your application, not in the image. Create a `DevServiceProvider`, register it in `bootstrap/providers.php`, and register the dev commands in its `boot()` — including any other your project needs (`reverb:start`, `horizon:listen`, `stripe listen ...`):
-
-```php
-use Illuminate\Foundation\DevCommands;
-
-if ($this->app->environment('local')) {
-    $engine = env('OCTANE_SERVER');
-
-    if ($engine) {
-        $port = env('OCTANE_PORT', 8000);
-        DevCommands::artisan("octane:start --watch --server={$engine} --port={$port}", 'server');
-    } else {
-        DevCommands::register('php-fpm -F 2>&1 | cat', 'server');
-    }
-
-    DevCommands::artisan('schedule:work', 'scheduler');
-}
-```
-
-The `server` name replaces the framework's default `php artisan serve` process. The port comes from the image's `OCTANE_PORT` env: 8000 behind nginx (roadrunner/swoole, where nginx owns 8080), 8080 when exposed directly (frankenphp). `env()` is deliberate here: the image sets `OCTANE_SERVER`/`OCTANE_PORT`, and `config/octane.php` may not exist in non-Octane projects.
-
-The `| cat` after php-fpm is required, not decorative: php-fpm opens its `error_log` (`/dev/stderr`) as a *path*, which fails when stderr is a socket — as it is under `@laravel/multiplex`. The pipe turns stderr into a pipe, which `/dev/stderr` can open.
-
-The framework defaults kept are the queue listener (`queue:listen`), Vite (`npm run dev`) and Pail. Drop one with `DevCommands::except()` — e.g. `DevCommands::except('vite')` if the project has no frontend.
-
-**Requirements:**
-
-- Laravel **13.16+** for `php artisan dev` — **13.25+ recommended**, since it auto-selects plain inline output when there is no TTY (containers, supervisord, CI) and restarts crashed processes automatically.
-- Node.js **≥ 22.13** in the image — already covered: Alpine ships Node 24, and the FrankenPHP image copies Node 24 from the official `node` image (Debian 13 apt pins Node at 20.x).
-
-**Notes:**
-
-- Keep the `VITE_PORT` mapping in `compose.yaml` while Vite is enabled: the browser still needs to reach the dev server for HMR.
-- Since the Vite dev server always serves assets locally, `start-container.sh` no longer runs `npm run build` on first boot.
-- On Laravel ≤ 12 there is no `artisan dev` — pin to an older revision of this repository if you need the old per-process supervisor programs.
-
 ---
 
 ## Environment Variables
 
-The production image exposes two environment variables:
+The production image exposes the following environment variables:
 
 
-| Variable     | Build Arg    | Description                                                    |
-| ------------ | ------------ | -------------------------------------------------------------- |
-| `COMMIT_SHA` | `COMMIT_SHA` | The Git commit SHA used to build the image                     |
-| `BRANCH`     | `BRANCH`     | The Git branch used to build the image                         |
-| —            | `ENGINE`     | The engine to use: `fpm`, `swoole`, `roadrunner`, `frankenphp` |
-
+| Variable     | Build Arg    | Description                                                   |
+| ------------ | ------------ | ------------------------------------------------------------- |
+| `COMMIT_SHA` | `COMMIT_SHA` | The Git commit SHA used to build the image                    |
+| `BRANCH`     | `BRANCH`     | The Git branch used to build the image                        |
+| `ENGINE`     | `ENGINE`     | The engine to use:`fpm`, `swoole`, `roadrunner`, `frankenphp` |
 
 Pass them at build time (adjust `ENGINE` to match your chosen engine):
 
 ```bash
+# Gitlab CI
+
 convox deploy --build-args "COMMIT_SHA=$CI_COMMIT_SHA" --build-args "BRANCH=$CI_COMMIT_REF_NAME" --build-args "ENGINE=swoole"
 ```
 
@@ -193,6 +228,27 @@ At runtime they are available as regular environment variables, which makes them
 
 ---
 
+## Trusted Proxies
+
+Both the local Caddy proxy and Convox's load balancer terminate TLS and forward the original scheme, host and client IP in `X-Forwarded-*` headers. Laravel ignores them until proxies are trusted. Containers are only ever reachable through the proxy, so we suggest trusting all proxies, locally and in Kubernetes:
+
+```php
+// bootstrap/app.php
+->withMiddleware(function (Middleware $middleware) {
+    $middleware->trustProxies(at: '*');
+})
+```
+
+On Convox, the real client IP additionally requires PROXY protocol — otherwise `X-Forwarded-For` carries the load balancer's IP:
+
+```bash
+# One time command on the Convox rack
+
+convox rack params set proxy_protocol=true -r <rack>
+```
+
+---
+
 ## Things to Review
 
 Before deploying, make sure to review these configuration values and adjust them for your project:
@@ -200,12 +256,11 @@ Before deploying, make sure to review these configuration values and adjust them
 **Upload & body size limits** — These three values work together and should be kept in sync. If a user uploads a file larger than any of these, the request will be rejected at that layer.
 
 
-| File                     | Setting                | Default | Notes                                                                                                                    |
-| ------------------------ | ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `confs/php.ini`          | `upload_max_filesize`  | `50M`   | Max size of a single uploaded file                                                                                       |
-| `confs/php.ini`          | `post_max_size`        | `60M`   | Max size of the entire POST body (should be slightly larger than `upload_max_filesize` to account for other form fields) |
-| `confs/nginx/nginx.conf` | `client_max_body_size` | `50m`   | Nginx will reject requests larger than this before PHP even sees them                                                    |
-
+| File                     | Setting                | Default | Notes                                                                                                                   |
+| ------------------------ | ---------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `confs/php.ini`          | `upload_max_filesize`  | `50M`   | Max size of a single uploaded file                                                                                      |
+| `confs/php.ini`          | `post_max_size`        | `60M`   | Max size of the entire POST body (should be slightly larger than`upload_max_filesize` to account for other form fields) |
+| `confs/nginx/nginx.conf` | `client_max_body_size` | `50m`   | Nginx will reject requests larger than this before PHP even sees them                                                   |
 
 **Content-Security-Policy** — In `confs/nginx/server-common.conf`, there is a commented-out `Content-Security-Policy` header. If your application uses iframes or is embedded by other domains, uncomment it and replace `*.allowed-domain.com` with your actual allowed origins:
 
@@ -223,7 +278,7 @@ This file is included by both the PHP-FPM and Octane Nginx configs (`confs/nginx
 I recommend extending the octane command to set up a desired amount of workers.
 Auto mode will base itself on the machine's CPU availability, colliding with whatever sizing you prepared for the container.
 
-Issues of timeouts may appear especially on small machines due to extreme CPU splitting 
+Issues of timeouts may appear especially on small machines due to extreme CPU splitting
 
 ---
 
@@ -245,12 +300,12 @@ Issues of timeouts may appear especially on small machines due to extreme CPU sp
 
 - **Composer + `php` binary** — There's an awkward issue where PHP is not properly referenced by Composer inside the FrankenPHP image. See: [Composer scripts referencing `php`](https://frankenphp.dev/docs/known-issues/#composer-scripts-referencing-php).
 - **`octane:frankenphp` vs `octane:serve`** — The FrankenPHP docs suggest running `php artisan octane:frankenphp` directly instead of `php artisan octane:serve --server=frankenphp`. While functionally identical, the former does not load configuration from the standard `config/octane.php` file.
-- **Double web server debate** — [Laravel Forge](https://forge.laravel.com/) appears to run FrankenPHP behind Nginx, similar to other Octane providers. Using a double web server can mask bugs, so this project uses the [official Docker approach recommended in the Laravel docs](https://laravel.com/docs/12.x/octane#frankenphp-via-docker) instead. See also [this Octane issue](https://github.com/laravel/octane/issues/889) confirming Forge's Nginx setup.
+- **Double web server debate** — [Laravel Forge](https://forge.laravel.com/) appears to run FrankenPHP behind Nginx, similar to other Octane providers. Using a double web server can mask bugs, so this project uses the [official Docker approach recommended in the Laravel docs](https://laravel.com/framework/docs/master/octane#frankenphp-via-docker) instead. See also [this Octane issue](https://github.com/laravel/octane/issues/889) confirming Forge's Nginx setup.
 - **Tinker does not work** — `php artisan tinker` cannot run inside the FrankenPHP image. FrankenPHP embeds PHP as a library (ZTS build) and replaces the standard `php` binary with its own wrapper, which is incompatible with PsySH's interactive REPL.
 
 ### Compose Volumes
 
-The Caddy volumes below are **not** set by default, but they are needed in a single-server environment for HTTPS handling and other Caddy features:
+The Caddy volumes below are **not** set by default, but they are needed in a single-server environment for HTTPS handling and other Caddy features. They persist the FrankenPHP container's **own** Caddy state (certs, ACME account) — unrelated to the local dev proxy, whose `caddy_data` volume the `caddy create` command already sets up. On Convox the load balancer terminates TLS, so they're unnecessary there.
 
 ```yaml
 - caddy_data:/data
@@ -262,11 +317,8 @@ The Caddy volumes below are **not** set by default, but they are needed in a sin
 
 | Feature                                                                                     | Reason                                                                      |
 | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| [Thread pool splitting](https://frankenphp.dev/docs/performance/#splitting-the-thread-pool) | Not configured — worth exploring for high-traffic workloads                 |
+| [Thread pool splitting](https://frankenphp.dev/docs/performance/#splitting-the-thread-pool) | Not configured — worth exploring for high-traffic workloads                |
 | [X-Sendfile / large file serving](https://frankenphp.dev/docs/x-sendfile/)                  | Not needed in a Kubernetes setup where files are served from object storage |
-| Custom Caddyfile                                                                            | Not included, but can be easily added by editing the `CMD`                  |
-| Additional Caddy modules                                                                    | None are bundled in this project                                            |
-
 
 > Most performance-related configuration is handled by the Octane server itself. See: [FrankenPHP Performance docs](https://frankenphp.dev/docs/performance/).
 
@@ -275,13 +327,13 @@ The Caddy volumes below are **not** set by default, but they are needed in a sin
 ## TODO
 
 - Adopt [PIE](https://github.com/php/pie) (the official PHP extension installer, replacing PECL) once upstream extensions release PHP 8.5-compatible versions. As of June 2026, igbinary, phpredis, and swoole do not compile against PHP 8.5 via PIE. Only xdebug works. Alpine `apk` packages and `install-php-extensions` apply patches that PIE does not.
-- Stress test to find optimal values in `convox.yml` (Kubernetes) and PHP-FPM/worker pool configurations.
+- Stress test to find optimal/reference values in `convox.yml` (Kubernetes) and PHP-FPM/worker pool configurations.
 
 ---
 
 ## Additional Notes
 
-- **OPcache & FPM in production** — When running FPM in production, OPcache is enabled. This means that code changes made at runtime (e.g. via `docker exec`) will not be reflected because PHP serves the cached opcodes. To force a full reload, gracefully restart the FPM master process:
+- **OPcache & FPM in production** — When running FPM in production, OPcache is enabled. This means that code changes made at runtime (e.g. via `docker exec`, even though you really should not do this) will not be reflected because PHP serves the cached opcodes. To force a full reload, gracefully restart the FPM master process:
 
 ```bash
 kill -USR2 $(pgrep -o php-fpm)
@@ -298,4 +350,3 @@ This kills all FPM workers and respawns them with a clean OPcache state.
 - [Laravel Sail](https://github.com/laravel/sail)
 - [TrafeX/docker-php-nginx](https://github.com/TrafeX/docker-php-nginx)
 - [dunglas/symfony-docker](https://github.com/dunglas/symfony-docker)
-

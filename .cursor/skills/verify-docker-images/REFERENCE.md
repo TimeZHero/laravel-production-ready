@@ -79,7 +79,7 @@ docker run --rm -v "$TMPDIR:/app" -w /app composer:latest \
 ### 6. Register the dev commands
 
 Create `$TMPDIR/app/Providers/DevServiceProvider.php` with the registrations from
-the README's "Development Processes" section:
+the README's "Development" section:
 
 ```php
 <?php
