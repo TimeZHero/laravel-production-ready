@@ -87,13 +87,14 @@ the README's "Development" section:
 namespace App\Providers;
 
 use Illuminate\Foundation\DevCommands;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\ServiceProvider;
 
 class DevServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
-        if (! $this->app->environment('local')) {
+        if (! App::isLocal()) {
             return;
         }
 

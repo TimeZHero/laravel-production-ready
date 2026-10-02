@@ -78,8 +78,9 @@ The following configuration is compatible for whatever engine (PHP runtime) you 
 
 ```php
 use Illuminate\Foundation\DevCommands;
+use Illuminate\Support\Facades\App;
 
-if ($this->app->environment('local')) {
+if (App::isLocal()) {
     $engine = env('OCTANE_SERVER');
 
     if ($engine) {
