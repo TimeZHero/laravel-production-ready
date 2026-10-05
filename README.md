@@ -141,6 +141,22 @@ server: { origin: process.env.VITE_DEV_SERVER_URL },
 5. `sail up -d` — then open `https://<folder>.localhost`. 🎉
 6. Multiple subdomains support: add them to the `caddy` label separated by `', '` (Caddy rejects a comma without space) and point the compose `APP_URL` line at the canonical one.
 7. Other HTTP services (Mailpit, MinIO console, …) get plain `caddy` labels on their own service, with the hostname prefixed by the service name — e.g. on the mailpit service: `caddy: 'mailpit.${COMPOSE_PROJECT_NAME}.localhost'` + `caddy.reverse_proxy: '{{upstreams 8025}}'`. The `caddy_1`/`caddy_2` index is per-container — only needed when one service serves multiple domains, like the app container's Vite group.
+   - **DNS collision caveat:** joining the shared `caddy` network auto-registers the bare service name (`mailpit`) as a DNS alias on it — for every project that does this. Containers attached to both their project network and `caddy` (like the app) then resolve `mailpit` to multiple IPs round-robin, silently delivering half the mail to another project's Mailpit (SMTP returns 250 either way, so nothing logs). Fix: declare a manual alias on the project network only, and point the app at that alias — never at the bare service name:
+
+     ```yaml
+     mailpit:
+         networks:
+             sail:
+                 aliases:
+                     - mailpit.internal
+             caddy:   # labels only — never declare the alias here
+
+     laravel.test:
+         environment:
+             MAIL_HOST: 'mailpit.internal'   # container env wins over .env — .env stays stock
+     ```
+
+     The alias must be a *different* name: the bare service name is auto-registered on every joined network with no opt-out ([docker/compose#8223](https://github.com/docker/compose/issues/8223)), so re-declaring `mailpit` as a manual alias changes nothing. Manual aliases exist only where declared, and each project/worktree has its own `sail` network, so the alias always resolves to exactly one container. Delete mailpit's `ports` (`1025`/`8025`) too: SMTP is container-to-container and the UI goes through the proxy — this also lets parallel worktree stacks run simultaneously.
 8. This is compatible with worktrees in order to quickly launch separate clone environments
 
 ### Editor Files
