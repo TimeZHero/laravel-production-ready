@@ -21,6 +21,10 @@ Includes an ideal local environment by leveraging [Laravel Sail](https://github.
 - [Application Safeguards](#application-safeguards)
 - [Scheduler](#scheduler)
 - [Container Startup](#container-startup)
+- [Timeouts & Shutdown](#timeouts--shutdown)
+  - [Web Requests](#web-requests)
+  - [App Shutdown](#app-shutdown)
+  - [Queue Workers](#queue-workers)
 - [Things to Review](#things-to-review)
 - [Swoole](#swoole)
 - [FrankenPHP](#frankenphp)
@@ -422,6 +426,101 @@ Before deploying, make sure to review these configuration values and adjust them
 
 **Content-Security-Policy** — In `confs/nginx/server-common.conf`, there is a commented-out `Content-Security-Policy` header. If your application uses iframes or is embedded by other domains, uncomment it and replace `*.allowed-domain.com` with your actual allowed origins:
 
+## Timeouts & Shutdown
+
+Every time limit here sits inside a longer one. When an inner limit is longer than the layer around it, the outer layer cuts the work off first: the user gets a generic gateway error instead of Laravel's, a deploy kills a request mid-way, or a job runs twice. When you change one value, re-check its neighbours.
+
+### Web Requests
+
+| Layer   | Setting                                              | Value |
+| ------- | ---------------------------------------------------- | ----- |
+| PHP     | `max_execution_time` (`confs/php.ini`)               | 60    |
+| php-fpm | `request_terminate_timeout` (`confs/php-fpm.conf`)   | 60s   |
+| Octane  | `max_execution_time` (your app's `config/octane.php`) | 30    |
+| nginx   | `fastcgi_read_timeout` (nginx default)               | 60s   |
+| Convox  | `timeout` on the `app` service                       | 60    |
+
+On Linux, `max_execution_time` only counts time spent running PHP code. A request waiting on the database or an HTTP call can outlive it, so `request_terminate_timeout` is the wall-clock limit that actually ends a php-fpm request. The Octane engines use Octane's own `max_execution_time` instead; nginx's `proxy_read_timeout` in front of them is 3600 to keep WebSockets open, so the Octane setting is the only request limit there.
+
+To allow longer requests, raise these together, then raise the shutdown values below so a deploy still waits for them.
+
+### App Shutdown
+
+On a deploy or scale-down, Kubernetes runs the `preStop` hook, then sends SIGTERM, then sends SIGKILL once `termination.grace` has passed. The grace period counts from the start, `preStop` included.
+
+```yaml
+app:
+  lifecycle:
+    preStop: "sleep 5"
+  termination:
+    grace: 75
+```
+
+1. **`preStop: sleep 5`** — the pod keeps serving while the ingress stops routing to it. Without it, requests that arrive in the first seconds after SIGTERM hit a closed port and get a 502. Five seconds covers the ingress catching up in a normal cluster.
+2. **SIGTERM** — supervisord stops nginx first, then the app server (programs stop in reverse `priority` order). nginx and php-fpm get `QUIT` (`stopsignal=QUIT`): they stop accepting connections and finish the requests already running. `TERM`, supervisord's default, makes both drop them. Octane keeps `TERM`, which it handles by draining its own server. `stopwaitsecs=65` is the most supervisord waits per program before SIGKILL: longer than the 60-second request limit, so a request is ended by its own limit (with Laravel's error), never by the shutdown.
+3. **`termination.grace: 75`** — covers the 5-second sleep plus the 65 seconds supervisord may wait. nginx only finishes once its proxied requests do, so the app server behind it has nothing left to drain and stops at once.
+
+The rule: request limit < `stopwaitsecs`, and `preStop` + `stopwaitsecs` < `termination.grace`.
+
+**Deploy time.** The grace period is a ceiling, not a wait. An idle pod is gone about 5 seconds after the deploy starts replacing it (the sleep, then an immediate stop), and a pod in the middle of a request waits only for that request. With Convox's default `deployment.maximum: 200`, a full set of new pods starts beside the old ones and the old ones stop together, so on a normal deploy the shutdown adds those ~5 seconds once, not per pod. Only a request running close to the 60-second limit stretches it toward 75. Lower `stopwaitsecs`, `grace` and the request limits together if that ceiling is too high for you.
+
+**FrankenPHP** has no supervisord. On SIGTERM, Octane asks Caddy to stop and exits right away, which kills requests still running ([laravel/octane#970](https://github.com/laravel/octane/issues/970)). The `preStop` sleep is what protects it: anything shorter than the sleep finishes before SIGTERM arrives. Requests longer than 5 seconds that are running when the pod stops are dropped; raise the sleep only if those matter, since it adds to every deploy.
+
+### Queue Workers
+
+| Setting             | Where                                                | Value |
+| ------------------- | ---------------------------------------------------- | ----- |
+| `--timeout`         | `worker` command in `convox.yml`                      | 60    |
+| `termination.grace` | `worker` service in `convox.yml`                      | 70    |
+| `retry_after`       | `config/queue.php` (Laravel default)                 | 90    |
+
+On SIGTERM, `queue:work` finishes the job it is running and then exits. These are Laravel's own defaults (`--timeout` 60, `retry_after` 90), so only the grace period needs setting.
+
+- `termination.grace` must be longer than `--timeout`. Otherwise Kubernetes kills a job that Laravel would still let finish.
+- `retry_after` is how long the queue waits before handing a reserved job to another worker. It must also be longer than `--timeout`, or a slow job runs twice at the same time. Raise it with `DB_QUEUE_RETRY_AFTER` / `REDIS_QUEUE_RETRY_AFTER` if you raise `--timeout`. On SQS the queue's visibility timeout plays this role and is set on the queue itself.
+- A job's own `$timeout` property overrides `--timeout`; keep it inside the same limits.
+
+Like the app, the grace period is a ceiling: an idle worker exits immediately, and a deploy waits at most for the job in progress, 60 seconds in the worst case.
+
+The scheduler keeps `grace: 45`: its tasks should dispatch jobs and return (see [Scheduler](#scheduler)), so it never has long work to finish.
+
+**Jobs longer than the grace period** should stop early instead of raising the grace period to match. Implement `Interruptible` (Laravel 13.7+): when the worker receives SIGTERM it calls `interrupted()` on the running job. The call is cooperative: the job sets a flag, its loop checks it, and it releases itself back onto the queue so the next worker continues from the saved progress.
+
+```php
+use Illuminate\Contracts\Queue\Interruptible;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Queue\Queueable;
+
+class ImportUsers implements ShouldQueue, Interruptible
+{
+    use Queueable;
+
+    private bool $interrupted = false;
+
+    public function handle(): void
+    {
+        foreach ($this->pendingRows() as $row) {
+            if ($this->interrupted) {
+                $this->release();
+
+                return;
+            }
+
+            $this->import($row);
+        }
+    }
+
+    public function interrupted(int $signal): void
+    {
+        $this->interrupted = true;
+    }
+}
+```
+
+A release counts as an attempt against `--tries`. `queue:restart` never calls `interrupted()` (it lets the current job finish), and `queue:work --once` installs no signal handlers at all; on Convox every deploy sends SIGTERM to the worker daemon, which is the case this covers.
+
+---
+
 ```nginx
 # Uncomment to allow framing from subdomains (and optionally remove X-Frame-Options):
 # add_header Content-Security-Policy "frame-ancestors 'self' *.allowed-domain.com" always;
@@ -456,7 +555,7 @@ Issues of timeouts may appear especially on small machines due to extreme CPU sp
 
 ### Quirks
 
-- **Composer + `php` binary** — There's an awkward issue where PHP is not properly referenced by Composer inside the FrankenPHP image. See: [Composer scripts referencing `php`](https://frankenphp.dev/docs/known-issues/#composer-scripts-referencing-php).
+- **Composer + `php` binary** — There's an awkward issue where PHP is not properly referenced by Composer inside the FrankenPHP image. See: [Composer scripts referencing `php`](https://frankenphp.dev/docs/known-issues/#composer-scripts-referencing-php). The image installs that wrapper as `php`, with one change from the docs: it `exec`s FrankenPHP. The container command runs through it (`php artisan ...`), so without `exec` bash would be PID 1, ignore SIGTERM, and every stop would wait for the SIGKILL.
 - **`octane:frankenphp` vs `octane:serve`** — The FrankenPHP docs suggest running `php artisan octane:frankenphp` directly instead of `php artisan octane:serve --server=frankenphp`. While functionally identical, the former does not load configuration from the standard `config/octane.php` file.
 - **Double web server debate** — [Laravel Forge](https://forge.laravel.com/) appears to run FrankenPHP behind Nginx, similar to other Octane providers. Using a double web server can mask bugs, so this project uses the [official Docker approach recommended in the Laravel docs](https://laravel.com/framework/docs/master/octane#frankenphp-via-docker) instead. See also [this Octane issue](https://github.com/laravel/octane/issues/889) confirming Forge's Nginx setup.
 - **Tinker does not work** — `php artisan tinker` cannot run inside the FrankenPHP image. FrankenPHP embeds PHP as a library (ZTS build) and replaces the standard `php` binary with its own wrapper, which is incompatible with PsySH's interactive REPL.
@@ -491,7 +590,7 @@ The Caddy volumes below are **not** set by default, but they are needed in a sin
 
 ## Additional Notes
 
-- **Process supervision & restarts** — In the nginx-based images, supervisord manages each process with `autorestart=true`, `startsecs=1`, `startretries=10`, `stopasgroup=true` and `killasgroup=true`. A process that crashes after running normally is restarted immediately and indefinitely. A process that keeps dying within a second of starting is retried 10 times with growing delays (1s, 2s, 3s…, about 55s total) and then left in `FATAL`. `stopasgroup` and `killasgroup` send those signals to the whole process group, so nginx workers, php-fpm children and Octane workers die with the master instead of keeping the socket or port.
+- **Process supervision & restarts** — In the nginx-based images, supervisord manages each process with `autorestart=true`, `startsecs=1` and `startretries=10`. A process that crashes after running normally is restarted immediately and indefinitely. A process that keeps dying within a second of starting is retried 10 times with growing delays (1s, 2s, 3s…, about 55s total) and then left in `FATAL`. `stopasgroup` (nginx, php-fpm, dev) and `killasgroup` (all) send the stop and kill signals to the whole process group, so workers die with their master instead of keeping the socket or port. Octane gets `killasgroup` only: it stops its own workers on `TERM`, and a group-wide `TERM` would kill them mid-request. Stop signals and wait times are covered in [Timeouts & Shutdown](#app-shutdown).
 
   Those two settings work together and both are needed: `startretries` only counts crashes that happen inside `startsecs`, so the old `startretries=0` sent a process to `FATAL` on its first fast crash — a brief database outage could kill a process permanently while the container stayed up and the orchestrator saw nothing wrong.
 
