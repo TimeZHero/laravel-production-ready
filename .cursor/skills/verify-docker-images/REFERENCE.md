@@ -175,12 +175,13 @@ if further checks on the nginx-based dev containers are needed.
 
 ### 10. Patch start-container.sh
 
-In `$TMPDIR/scripts/start-container.sh`, make two replacements so the container doesn't fail on missing DB or missing Filament:
+In `$TMPDIR/scripts/start-container.sh`, make three replacements so the container doesn't fail on missing DB or missing Filament (these tests run with `DB_CONNECTION=null`, so both migration branches hit an unreachable connection):
 
-| Original                                  | Replacement                                              |
-| ----------------------------------------- | -------------------------------------------------------- |
-| `php artisan migrate --force --isolated`   | `php artisan migrate --force --isolated 2>/dev/null \|\| true` |
-| `php artisan filament:optimize`            | `php artisan filament:optimize 2>/dev/null \|\| true`        |
+| Original                                   | Replacement                                                       |
+| ------------------------------------------- | -------------------------------------------------------------------- |
+| `    php artisan migrate --force --isolated=1` | `    php artisan migrate --force --isolated=1 2>/dev/null \|\| true` |
+| `    php artisan migrate --force` (inside the `else` branch) | `    php artisan migrate --force 2>/dev/null \|\| true` |
+| `php artisan filament:optimize`             | `php artisan filament:optimize 2>/dev/null \|\| true`                |
 
 ### 11. Build all 8 images
 

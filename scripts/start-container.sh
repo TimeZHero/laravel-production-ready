@@ -22,15 +22,16 @@ if [ "${APP_ENV:-production}" = "local" ]; then
     fi
 fi
 
-# --isolated uses cache locks; fall back to non-isolated if the cache table doesn't exist yet
 echo "running migrations..."
-php artisan migrate --force --isolated 2>/dev/null || php artisan migrate --force
+if php artisan migrate:status >/dev/null; then
+    php artisan migrate --force --isolated=1
+else
+    # No migrations table yet: nothing exists to lock against, isolation is moot.
+    php artisan migrate --force
+fi
 
 # Production environment
 if [ "${APP_ENV:-production}" = "production" ]; then
-    echo "clearing cache..."
-    php artisan optimize:clear
-
     echo "optimizing..."
     php artisan optimize
     # Uncomment if you use Filament (https://filamentphp.com)
