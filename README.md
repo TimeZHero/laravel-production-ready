@@ -18,6 +18,9 @@ Includes an ideal local environment by leveraging [Laravel Sail](https://github.
   - [Redis](#redis)
 - [Environment Variables](#environment-variables)
 - [Trusted Proxies](#trusted-proxies)
+- [Application Safeguards](#application-safeguards)
+- [Scheduler](#scheduler)
+- [Container Startup](#container-startup)
 - [Things to Review](#things-to-review)
 - [Swoole](#swoole)
 - [FrankenPHP](#frankenphp)
@@ -224,25 +227,26 @@ The image ships with [igbinary](https://github.com/igbinary/igbinary) and [lz4](
 The production image exposes the following environment variables:
 
 
-| Variable     | Build Arg    | Description                                                   |
-| ------------ | ------------ | ------------------------------------------------------------- |
-| `COMMIT_SHA` | `COMMIT_SHA` | The Git commit SHA used to build the image                    |
-| `BRANCH`     | `BRANCH`     | The Git branch used to build the image                        |
-| `ENGINE`     | `ENGINE`     | The engine to use:`fpm`, `swoole`, `roadrunner`, `frankenphp` |
+| Variable     | Build Arg    | Description                                                    |
+| ------------ | ------------ | -------------------------------------------------------------- |
+| `COMMIT_SHA` | `COMMIT_SHA` | The Git commit SHA used to build the image                     |
+| `GIT_TAG`    | `GIT_TAG`    | The Git tag used to build the image. Empty on a branch deploy  |
+| `BRANCH`     | `BRANCH`     | The Git branch used to build the image                         |
+| `ENGINE`     | `ENGINE`     | The engine to use:`fpm`, `swoole`, `roadrunner`, `frankenphp`  |
 
 Pass them at build time (adjust `ENGINE` to match your chosen engine):
 
 ```bash
 # Gitlab CI
 
-convox deploy --build-args "COMMIT_SHA=$CI_COMMIT_SHA" --build-args "BRANCH=$CI_COMMIT_REF_NAME" --build-args "ENGINE=swoole"
+convox deploy --build-args "COMMIT_SHA=$CI_COMMIT_SHA" --build-args "GIT_TAG=$CI_COMMIT_TAG" --build-args "BRANCH=$CI_COMMIT_REF_NAME" --build-args "ENGINE=swoole"
 ```
 
-At runtime they are available as regular environment variables, which makes them useful for Sentry releases:
+`CI_COMMIT_TAG` is only set when the pipeline itself was triggered by a tag. A deploy from `master` leaves `GIT_TAG` empty, even if some older commit on that branch is tagged. That is what you want: the release should name the code you built, and a branch tip usually has no tag of its own.
 
-```php
-'release' => env('COMMIT_SHA'),
-```
+Copy [`stubs/config/deployment.php`](stubs/config/deployment.php) to `config/deployment.php` in the app. It turns those variables into one release string: `package@version` when `GIT_TAG` is set (a leading `v` is stripped, so `v1.4.0` becomes `myapp@1.4.0`), and the bare commit SHA otherwise. For Sentry, use `config('deployment.release')`.
+
+`env()` inside a config file is resolved when `config:cache` runs and then baked in, so it works in production. `env()` anywhere else returns `null` once the config is cached, which is why the release is read back through `config()`.
 
 ---
 
@@ -264,6 +268,140 @@ On Convox, the real client IP additionally requires PROXY protocol — otherwise
 
 convox rack params set proxy_protocol=true -r <rack>
 ```
+
+---
+
+## Application Safeguards
+
+Convox-level protections (`singleton`, `concurrency: Forbid`, a fixed `scale.count`) stop duplicate Processes from running for the services defined in *this repo's* `convox.yml`. They say nothing about what happens if this image is deployed somewhere else, or if a `scale.count` is later bumped without realizing the implication. For safety that travels with the application regardless of how it's hosted, mirror the relevant guarantees inside `AppServiceProvider::boot()`.
+
+This section isn't scheduler-specific — it's a home for any cross-cutting, multi-replica safeguard the app should enforce on its own, independent of the infrastructure running it. Today it only covers the scheduler:
+
+```php
+<?php
+
+namespace App\Providers;
+
+use Illuminate\Support\Facades\Schedule;
+use Illuminate\Support\ServiceProvider;
+
+class AppServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        Schedule::alwaysOnOneServer();
+    }
+}
+```
+
+- **`Schedule::alwaysOnOneServer()`** locks every task so only one replica runs it per tick, even if the scheduler is later scaled up or deployed without `singleton`.
+  - `CACHE_STORE` must be shared (`redis` or `database`). `file` and `array` are per container, so every container takes its own lock and runs the task.
+  - Name every closure (`->name('...')`). Unnamed ones are skipped and run on every server.
+
+---
+
+## Scheduler
+
+Laravel's scheduler needs `php artisan schedule:run` invoked continuously. There are three ways to wire that up in Kubernetes/Convox, from least to most complex:
+
+| Option                                                        | Mechanism                                                                   | Container cost                             | Complexity | Used by this repo |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------- | ---------- | ------------------ |
+| **Service running `schedule:work`**                           | One long-lived Process loops in-memory and forks `schedule:run` every minute | One container, boots once                   | Low        | ✅ default          |
+| **Timer running `schedule:run`**                               | A Convox Timer (Kubernetes `CronJob`) boots a fresh container every minute  | One container boot per minute (1,440/day)   | Medium     | —                   |
+| **One Timer per task, generated from `schedule:list`**         | Each scheduled task becomes its own `CronJob`, bypassing the scheduler entirely | One container boot per task, per occurrence | High       | —                   |
+
+All three are viable. The service is what's configured in this repo's `convox.yml` because it's the cheapest and has the fewest moving parts.
+
+Whichever option you use, schedule jobs, not synchronous work. A task should dispatch onto the queue (`Schedule::job(...)`) and return; the `worker` service runs it. A command that does the work itself holds the scheduler for as long as it runs.
+
+Don't use `runInBackground()`. A timer's `schedule:run` exits immediately and the container takes the background process with it. Under `schedule:work`, a deploy stops the scheduler without waiting for that process.
+
+### Option 1 — Service running `schedule:work` (default)
+
+```yaml
+scheduler:
+  build:
+    manifest: Dockerfile
+  command: php artisan schedule:work --whisper
+  internal: true
+  singleton: true
+  health:
+    disable: true
+  termination:
+    grace: 45
+  resources:
+    - db
+    - redis
+  scale:
+    count: 1
+    cpu: 120
+    memory: 256
+```
+
+- `schedule:work` runs in the foreground and spawns `schedule:run` as a child process once a minute — this is also what makes sub-minute schedules (`everySecond()`, `everyTenSeconds()`, …) possible. A Timer-based approach can't go below one minute.
+- `singleton: true` stops Convox from starting a second Process of this service while a new one is rolling out, and `scale.count: 1` keeps it at exactly one replica at rest. Together they prevent duplicate executions at the infrastructure level; [Application Safeguards](#application-safeguards) covers the application-level backstop for everything these two settings don't catch.
+- `--whisper` suppresses the "No scheduled commands are ready to run." line that `schedule:run` otherwise logs every single minute — most ticks have nothing due, and that line adds no value to a log aggregator.
+- `schedule:work` also accepts `--run-output-file=<path>`, which redirects `schedule:run`'s output to a file instead of stdout. **Don't use it here** — this setup keeps all process output on stdout/stderr so container logs stay the single source of truth (see `LOG_CHANNEL=stderr`); writing to a file inside an ephemeral container just makes that output unreachable.
+- Sized smaller than the `worker` service: it only ever runs short-lived `schedule:run` children, never a persistent job-processing loop.
+
+### Option 2 — Timer running `schedule:run`
+
+```yaml
+timers:
+  scheduler:
+    command: php artisan schedule:run
+    schedule: "* * * * *"
+    service: app
+    concurrency: Forbid
+```
+
+- Convox v3 timers map to Kubernetes `CronJob`s and support `concurrency: Allow | Forbid | Replace`. `Forbid` is the one worth setting here — it stops a new `schedule:run` invocation from starting while the previous minute's is still finishing.
+- No long-lived scheduler process exists, so this only makes sense if every scheduled task finishes well within a minute, and sub-minute schedules can't be used at all.
+- Every tick pays a full container boot (framework bootstrap, cached config loading, etc.), 1,440 times a day, for a command that most of the time does nothing. Reasonable if the platform/billing model favors short-lived Jobs over an always-on Process, but strictly more expensive than Option 1 for the same outcome.
+
+### Option 3 — One Timer per task, generated from `schedule:list`
+
+`php artisan schedule:list --json` dumps every defined task with its resolved cron expression. That output can drive a build-time script that emits one Convox `timers:` entry per task, each invoking its command directly on its own schedule — bypassing `schedule:run`/`schedule:work` (and Laravel's own due-check) entirely.
+
+This is the most complex option and only worth it for very large or heterogeneous schedules:
+
+- Every task gets its own `CronJob`, independently visible (`kubectl get cronjobs`) and independently sized/resourced.
+- The source of truth for cron expressions moves outside `routes/console.php` into generated `convox.yml` entries, which have to be regenerated and redeployed whenever the schedule changes — a schedule change becomes a deploy, not just code picked up by the next `schedule:work` tick.
+- `onOneServer()` / `alwaysOnOneServer()` lose most of their purpose, since each task already gets one `Job` per schedule tick from Kubernetes — but `withoutOverlapping()` is still relevant for tasks whose own duration can exceed their interval.
+
+Not implemented in this repo — documented here as the natural next step if Option 1 ever becomes a bottleneck.
+
+---
+
+## Container Startup
+
+`scripts/start-container.sh` is the entrypoint for every nginx-based image. It installs dependencies in local only, runs migrations, then warms the caches in production before handing off to the image's `CMD`.
+
+### Migrations
+
+```sh
+if php artisan migrate:status >/dev/null; then
+    php artisan migrate --force --isolated=1
+else
+    php artisan migrate --force
+fi
+```
+
+`--isolated` takes a cache lock so concurrently booting containers don't migrate at the same time. The container that loses the lock **skips** the migration and exits with the value you pass. `1` makes the entrypoint fail and the orchestrator restart it, so the retry is the wait. A bare `--isolated` exits `0`, and that container would boot against a database still mid-migration.
+
+`1` is also what a failed migration returns. Both cases should stop the boot, so there is nothing to tell apart, and there is no fallback to an unlocked `migrate` on that path — retrying a genuinely failed migration without the lock is worse than a crash loop.
+
+The `migrate:status` check exists for one narrow case: a brand-new database has no `migrations` table yet, so there is also nothing for `--isolated` to lock against — taking the lock itself fails, regardless of cache store. `migrate:status` exits non-zero exactly when that table is missing, so the entrypoint falls back to a plain `migrate --force` only then, bootstrapping the schema (including the `cache`/`cache_locks` tables, if `CACHE_STORE=database`) in one unlocked pass. Every later boot finds the table and takes the isolated path. This keeps first boot zero-config for local dev and fresh deploys alike, with one caveat: if the very first deploy itself starts with more than one replica, both can see the same missing table and race on the same bootstrap migration — deploy the first release with a single replica.
+
+Running migrations from the entrypoint keeps this repo dependency-free, but every booting container attempts them. For stricter control, run them once per release from CI (`convox build` → `convox run app php artisan migrate --force` → `convox releases promote`) and delete the block.
+
+### Caches
+
+`php artisan optimize` runs in production only. It writes `bootstrap/cache/*.php` on the container's **own** filesystem — it has nothing to do with `CACHE_STORE`, so there is no shared state to inherit and every container has to run it for itself.
+
+`optimize:clear` is deliberately **not** run first. It includes `cache:clear`, and for the Redis store that is a `FLUSHDB` on the cache connection, not a prefix-aware delete — every booting pod would wipe the whole logical Redis database mid-rollout. Freshly written caches don't need clearing anyway, since the container starts with an empty `bootstrap/cache`.
+
+> Stock Laravel keeps cache on the `cache` Redis connection (`REDIS_CACHE_DB=1`) and locks on `default` (`REDIS_DB=0`), which limits the blast radius. ElastiCache with cluster mode enabled only has database `0` (Valkey 9 can enable more, but only if `cluster-databases` was set when the cluster was created). On that setup a `cache:clear` also takes sessions, queued jobs and locks.
 
 ---
 
@@ -350,6 +488,12 @@ The Caddy volumes below are **not** set by default, but they are needed in a sin
 ---
 
 ## Additional Notes
+
+- **Process supervision & restarts** — In the nginx-based images, supervisord manages each process with `autorestart=true`, `startsecs=1` and `startretries=10`. A process that crashes after running normally is restarted immediately and indefinitely. A process that keeps dying within a second of starting is retried 10 times with growing delays (1s, 2s, 3s…, about 55s total) and then left in `FATAL`.
+
+  Those two settings work together and both are needed: `startretries` only counts crashes that happen inside `startsecs`, so the old `startretries=0` sent a process to `FATAL` on its first fast crash — a brief database outage could kill a process permanently while the container stayed up and the orchestrator saw nothing wrong.
+
+  Reaching `FATAL` is intentional rather than a dead end. In production the `liveness` probe in `convox.yml` stops getting a healthy `/up` and Kubernetes replaces the pod, applying its own exponential backoff. Locally, `restart: unless-stopped` in `compose.yaml` covers the container exiting (which is how FrankenPHP fails, since it has no supervisord); a `FATAL` program under supervisord stays down until you restart the container, with the reason in the logs.
 
 - **OPcache & FPM in production** — When running FPM in production, OPcache is enabled. This means that code changes made at runtime (e.g. via `docker exec`, even though you really should not do this) will not be reflected because PHP serves the cached opcodes. To force a full reload, gracefully restart the FPM master process:
 
