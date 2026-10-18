@@ -58,8 +58,10 @@ services:
       failureThreshold: 6
     internal: false
     port: 8080
+    lifecycle:
+      preStop: "sleep 5"
     termination:
-      grace: 45
+      grace: 75
     timeout: 60
     resources:
       - db
@@ -75,15 +77,14 @@ services:
   worker:
     build:
       manifest: Dockerfile
-    command: php artisan queue:work --tries=3 --timeout=90 --max-time=86400 --max-jobs=1000
+    command: php artisan queue:work --tries=3 --timeout=60 --max-time=86400 --max-jobs=1000
     environment:
       - RUN_MIGRATIONS=false
     internal: true
     health:
       disable: true
     termination:
-      grace: 45
-    timeout: 60
+      grace: 70
     resources:
       - db
       - redis
