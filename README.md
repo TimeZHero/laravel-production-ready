@@ -473,6 +473,8 @@ The rule: request limit < `stopwaitsecs`, and `preStop` + `stopwaitsecs` < `term
 | `--timeout`         | `queue` command in `convox.yml`                      | 60    |
 | `termination.grace` | `queue` service in `convox.yml`                      | 70    |
 | `retry_after`       | `config/queue.php` (Laravel default)                 | 90    |
+| `--max-time`        | `queue` command in `convox.yml`                      | 86400 |
+| `--max-jobs`        | `queue` command in `convox.yml`                      | 1000  |
 
 On SIGTERM, `queue:work` finishes the job it is running and then exits. These are Laravel's own defaults (`--timeout` 60, `retry_after` 90), so only the grace period needs setting.
 
@@ -481,6 +483,12 @@ On SIGTERM, `queue:work` finishes the job it is running and then exits. These ar
 - A job's own `$timeout` property overrides `--timeout`; keep it inside the same limits.
 
 Like the app, the grace period is a ceiling: an idle worker exits immediately, and a deploy waits at most for the job in progress, 60 seconds in the worst case.
+
+`--max-time=86400` and `--max-jobs=1000` recycle the process. Neither one interrupts the job already running. After that job finishes, or after an idle sleep, the worker checks the clock and the job count. Past either limit it returns exit code 0. `start-container.sh` `exec`s the command, so that process is PID 1: the container stops, and Convox starts a new one, which runs `optimize` again and then `queue:work`. Jobs waiting in the broker stay there.
+
+That restart is the useful part. `queue:work` keeps the framework loaded for the life of the process, and PHP does not reliably hand memory back to the OS. `--max-jobs` covers a busy worker. `--max-time` covers a quiet one that would otherwise live until the next deploy. A day is long enough that the boot gap is rare. Replicas from the same deploy share a start time, so they reach the limit together; the sample runs one, so that is a single gap of one container boot.
+
+`--timeout` is the other clock: an alarm around the current job. On Laravel 13 that alarm kills the worker (exit 1) after marking the job failed, and Convox restarts the container the same way. The 70-second grace period and the 90-second `retry_after` sit outside that 60 seconds, so a deploy can still finish the job and a second worker does not start it early.
 
 The scheduler keeps `grace: 45`: its tasks should dispatch jobs and return (see [Scheduler](#scheduler)), so it never has long work to finish.
 
