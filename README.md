@@ -416,6 +416,22 @@ The `migrate:status` check exists for one narrow case: a brand-new database has 
 
 Running migrations at container start keeps this repo dependency-free, but every booting app container attempts them. For stricter control, run them once per release from CI (`convox build` → `convox run app php artisan migrate --force` → `convox releases promote`) and set `RUN_MIGRATIONS=false` for every service.
 
+A normal deploy migrates while the previous release is still serving. That overlap is fine when the migration only adds something the old code ignores. When the migration rewrites data the old code is still reading or writing, take the application down first and bring it back once the new release is the one serving:
+
+```bash
+convox run app php artisan down --render="errors::503"
+# deploy the release that contains the migration
+convox run app php artisan up
+```
+
+`convox.yml` sets `APP_MAINTENANCE_DRIVER=cache` and leaves `APP_MAINTENANCE_STORE` empty, so the flag lives on `CACHE_STORE`. One `down` and one `up` cover every app, queue, and scheduler container.
+
+`--render` renders the view once, at the moment you run `down`, and stores the HTML. Later requests return that HTML. The view is not rendered again while the migration is changing the schema, which is when rendering it fails and the visitor gets a broken error page instead of the maintenance page. Pass `errors::503` — `resources/views/errors/503.blade.php` when that file exists, Laravel's own 503 view otherwise — or the view you designed for maintenance mode.
+
+Run `down` on the release that is currently serving, before the migration starts, so the view is rendered by code that still matches the database. Run `up` only after the new release is handling traffic.
+
+While the flag is up, `queue:work` stops taking new jobs (a job already running finishes) and the scheduler skips tasks that are not marked `evenInMaintenanceMode()`. `/up` stays reachable, so the probes in `convox.yml` do not replace pods for being down.
+
 ### Caches
 
 `php artisan optimize` runs in production for every role. It writes `bootstrap/cache/*.php` on the container's **own** filesystem — it has nothing to do with `CACHE_STORE`, so there is no shared state to inherit and every app, queue, and scheduler container has to run it for itself.
