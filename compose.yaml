@@ -16,6 +16,7 @@ services:
                 USER: 'sail'
                 WWWUSER: '${WWWUSER:-1000}'
                 COMPOSER_AUTH: '${COMPOSER_AUTH:-}'
+        restart: unless-stopped
         extra_hosts:
             - 'host.docker.internal:host-gateway'
         environment:

@@ -47,6 +47,12 @@ services:
       interval: 10
       path: /up
       timeout: 4
+    liveness:
+      path: /up
+      grace: 60
+      interval: 10
+      timeout: 4
+      failureThreshold: 6
     internal: false
     port: 8080
     termination:
