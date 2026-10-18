@@ -273,7 +273,7 @@ convox rack params set proxy_protocol=true -r <rack>
 
 ## Application Safeguards
 
-Convox-level protections (`singleton`, `concurrency: Forbid`, a fixed `scale.count`) stop duplicate Processes from running for the services defined in *this repo's* `convox.yml`. They say nothing about what happens if this image is deployed somewhere else, or if a `scale.count` is later bumped without realizing the implication. For safety that travels with the application regardless of how it's hosted, mirror the relevant guarantees inside `AppServiceProvider::boot()`.
+Infrastructure settings like a fixed `scale.count` only cover the services defined in *this repo's* `convox.yml`, and rolling deploys briefly run old and new Processes side by side. For safety that travels with the application regardless of how it's hosted, enforce the guarantees inside `AppServiceProvider::boot()`.
 
 This section isn't scheduler-specific — it's a home for any cross-cutting, multi-replica safeguard the app should enforce on its own, independent of the infrastructure running it. Today it only covers the scheduler:
 
@@ -294,7 +294,7 @@ class AppServiceProvider extends ServiceProvider
 }
 ```
 
-- **`Schedule::alwaysOnOneServer()`** locks every task so only one replica runs it per tick, even if the scheduler is later scaled up or deployed without `singleton`.
+- **`Schedule::alwaysOnOneServer()`** locks every task so only one Process runs it per tick, including the deploy overlap and any later scale-up.
   - `CACHE_STORE` must be shared (`redis` or `database`). `file` and `array` are per container, so every container takes its own lock and runs the task.
   - Maintenance mode and queue/schedule pauses use the same store: `convox.yml` leaves `APP_MAINTENANCE_STORE` empty, which falls back to `CACHE_STORE`.
   - Name every closure (`->name('...')`). Unnamed ones are skipped and run on every server.
@@ -325,7 +325,6 @@ scheduler:
     manifest: Dockerfile
   command: php artisan schedule:work --whisper
   internal: true
-  singleton: true
   health:
     disable: true
   termination:
@@ -340,7 +339,7 @@ scheduler:
 ```
 
 - `schedule:work` runs in the foreground and spawns `schedule:run` as a child process once a minute — this is also what makes sub-minute schedules (`everySecond()`, `everyTenSeconds()`, …) possible. A Timer-based approach can't go below one minute.
-- `singleton: true` stops Convox from starting a second Process of this service while a new one is rolling out, and `scale.count: 1` keeps it at exactly one replica at rest. Together they prevent duplicate executions at the infrastructure level; [Application Safeguards](#application-safeguards) covers the application-level backstop for everything these two settings don't catch.
+- No `singleton: true`. It stops the old Process before starting the new one, so a minute boundary falling in that gap is skipped for good — the scheduler has no catch-up. The default rolling update starts the new Process first, so both run briefly; `Schedule::alwaysOnOneServer()` (see [Application Safeguards](#application-safeguards)) makes that overlap harmless by letting only one of them run each due task. `scale.count: 1` keeps it at one Process at rest.
 - `--whisper` suppresses the "No scheduled commands are ready to run." line that `schedule:run` otherwise logs every single minute — most ticks have nothing due, and that line adds no value to a log aggregator.
 - `schedule:work` also accepts `--run-output-file=<path>`, which redirects `schedule:run`'s output to a file instead of stdout. **Don't use it here** — this setup keeps all process output on stdout/stderr so container logs stay the single source of truth (see `LOG_CHANNEL=stderr`); writing to a file inside an ephemeral container just makes that output unreachable.
 - Sized smaller than the `worker` service: it only ever runs short-lived `schedule:run` children, never a persistent job-processing loop.

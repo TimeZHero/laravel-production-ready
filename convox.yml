@@ -93,7 +93,6 @@ services:
       manifest: Dockerfile
     command: php artisan schedule:work --whisper
     internal: true
-    singleton: true
     health:
       disable: true
     termination:
