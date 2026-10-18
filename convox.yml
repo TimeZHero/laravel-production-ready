@@ -33,7 +33,8 @@ environment:
 
   # Support for multiple server instances
   - APP_MAINTENANCE_DRIVER=cache
-  - APP_MAINTENANCE_STORE=database
+  # Keeping this empty will default to cache store
+  - APP_MAINTENANCE_STORE=
 
   - COMPOSER_AUTH
 

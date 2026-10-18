@@ -296,6 +296,7 @@ class AppServiceProvider extends ServiceProvider
 
 - **`Schedule::alwaysOnOneServer()`** locks every task so only one replica runs it per tick, even if the scheduler is later scaled up or deployed without `singleton`.
   - `CACHE_STORE` must be shared (`redis` or `database`). `file` and `array` are per container, so every container takes its own lock and runs the task.
+  - Maintenance mode and queue/schedule pauses use the same store: `convox.yml` leaves `APP_MAINTENANCE_STORE` empty, which falls back to `CACHE_STORE`.
   - Name every closure (`->name('...')`). Unnamed ones are skipped and run on every server.
 
 ---
