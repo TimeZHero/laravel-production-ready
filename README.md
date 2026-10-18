@@ -79,6 +79,8 @@ alias sail='bash $([ -f sail ] && echo sail || echo vendor/bin/sail)'
 
 The dev command is [`php artisan dev`](https://laravel.com/docs/artisan#the-dev-command), automatically running queue, scheduler, Vite dev server and Pail log tailing.
 
+Use Laravel **13.36 or newer**. `php artisan dev` itself runs from 13.16, and 13.25 selects inline output when the process has no TTY. 13.36 is the floor for this guide: [Application Safeguards](#application-safeguards) sets `Worker::$flushStickyConnections`, which does not exist before that release.
+
 Create a `DevServiceProvider`, register it in `bootstrap/providers.php`, and register whatever your project needs in `boot()` (`reverb:start`, `horizon:listen`, `stripe listen ...`)
 
 The following configuration is compatible for whatever engine (PHP runtime) you decide to use. Feel free to simplify it if you do not want to support all engines in your code
@@ -281,13 +283,14 @@ convox rack params set proxy_protocol=true -r <rack>
 
 Infrastructure settings like a fixed `scale.count` only cover the services defined in *this repo's* `convox.yml`, and rolling deploys briefly run old and new Processes side by side. For safety that travels with the application regardless of how it's hosted, enforce the guarantees inside `AppServiceProvider::boot()`.
 
-This section isn't scheduler-specific — it's a home for any cross-cutting, multi-replica safeguard the app should enforce on its own, independent of the infrastructure running it. Today it only covers the scheduler:
+This section isn't scheduler-specific — it's a home for any cross-cutting, multi-replica safeguard the app should enforce on its own, independent of the infrastructure running it:
 
 ```php
 <?php
 
 namespace App\Providers;
 
+use Illuminate\Queue\Worker;
 use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\ServiceProvider;
 
@@ -296,14 +299,24 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Schedule::alwaysOnOneServer();
+
+        Worker::$flushStickyConnections = true;
     }
 }
+```
+
+On each database connection in `config/database.php` (`mysql`, `pgsql`, …), also read your own writes for the rest of that process:
+
+```php
+'sticky' => true,
 ```
 
 - **`Schedule::alwaysOnOneServer()`** locks every task so only one Process runs it per tick, including the deploy overlap and any later scale-up.
   - `CACHE_STORE` must be shared (`redis` or `database`). `file` and `array` are per container, so every container takes its own lock and runs the task.
   - Maintenance mode and queue/schedule pauses use the same store: `convox.yml` leaves `APP_MAINTENANCE_STORE` empty, which falls back to `CACHE_STORE`.
   - Name every closure (`->name('...')`). Unnamed ones are skipped and run on every server.
+- **`'sticky' => true`** sends later reads on that connection to the write host after a write, so the same process sees the row it just wrote. It only changes routing when the connection has a separate read host; with a single host it is a no-op. Octane clears the flag before every HTTP request.
+- **`Worker::$flushStickyConnections = true`** (Laravel 13.36+) clears that same flag before every queued job. `queue:work` is one long-lived process, so without the reset a single job that writes sends every later job on that worker to the primary until the process is recycled — a deploy, `--max-jobs`, or a crash. A job that must read a row an earlier job just wrote belongs in a chain or a batch: once more than one worker is running, landing on the same process is not an ordering guarantee. The static property does not exist before 13.36, and assigning it fatals.
 
 ---
 
