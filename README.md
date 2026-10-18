@@ -332,7 +332,7 @@ Laravel's scheduler needs `php artisan schedule:run` invoked continuously. There
 
 All three are viable. The service is what's configured in this repo's `convox.yml` because it's the cheapest and has the fewest moving parts.
 
-Whichever option you use, schedule jobs, not synchronous work. A task should dispatch onto the queue (`Schedule::job(...)`) and return; the `worker` service runs it. A command that does the work itself holds the scheduler for as long as it runs.
+Whichever option you use, schedule jobs, not synchronous work. A task should dispatch onto the queue (`Schedule::job(...)`) and return; the `queue` service runs it. A command that does the work itself holds the scheduler for as long as it runs.
 
 Don't use `runInBackground()`. A timer's `schedule:run` exits immediately and the container takes the background process with it. Under `schedule:work`, a deploy stops the scheduler without waiting for that process.
 
@@ -361,7 +361,7 @@ scheduler:
 - No `singleton: true`. It stops the old Process before starting the new one, so a minute boundary falling in that gap is skipped for good — the scheduler has no catch-up. The default rolling update starts the new Process first, so both run briefly; `Schedule::alwaysOnOneServer()` (see [Application Safeguards](#application-safeguards)) makes that overlap harmless by letting only one of them run each due task. `scale.count: 1` keeps it at one Process at rest.
 - `--whisper` suppresses the "No scheduled commands are ready to run." line that `schedule:run` otherwise logs every single minute — most ticks have nothing due, and that line adds no value to a log aggregator.
 - `schedule:work` also accepts `--run-output-file=<path>`, which redirects `schedule:run`'s output to a file instead of stdout. **Don't use it here** — this setup keeps all process output on stdout/stderr so container logs stay the single source of truth (see `LOG_CHANNEL=stderr`); writing to a file inside an ephemeral container just makes that output unreachable.
-- Sized smaller than the `worker` service: it only ever runs short-lived `schedule:run` children, never a persistent job-processing loop.
+- Sized smaller than the `queue` service: it only ever runs short-lived `schedule:run` children, never a persistent job-processing loop.
 
 ### Option 2 — Timer running `schedule:run`
 
@@ -394,7 +394,7 @@ Not implemented in this repo — documented here as the natural next step if Opt
 
 ## Container Startup
 
-`scripts/start-container.sh` is the entrypoint for every image. It installs dependencies in local only, runs migrations when `RUN_MIGRATIONS=true`, then warms the caches in production before handing off to the image's `CMD`. The Dockerfiles default `RUN_MIGRATIONS=true`, preserving ordinary Docker and Sail behavior. The Convox example makes the policy explicit: `app` enables it; `worker` and `scheduler` set it to `false`.
+`scripts/start-container.sh` is the entrypoint for every image. It installs dependencies in local only, runs migrations when `RUN_MIGRATIONS=true`, then warms the caches in production before handing off to the image's `CMD`. The Dockerfiles default `RUN_MIGRATIONS=true`, preserving ordinary Docker and Sail behavior. The Convox example makes the policy explicit: `app` enables it; `queue` and `scheduler` set it to `false`.
 
 ### Migrations
 
@@ -418,28 +418,13 @@ Running migrations at container start keeps this repo dependency-free, but every
 
 ### Caches
 
-`php artisan optimize` runs in production for every role. It writes `bootstrap/cache/*.php` on the container's **own** filesystem — it has nothing to do with `CACHE_STORE`, so there is no shared state to inherit and every app, worker, and scheduler container has to run it for itself.
+`php artisan optimize` runs in production for every role. It writes `bootstrap/cache/*.php` on the container's **own** filesystem — it has nothing to do with `CACHE_STORE`, so there is no shared state to inherit and every app, queue, and scheduler container has to run it for itself.
 
 `optimize:clear` is deliberately **not** run first. It includes `cache:clear`, and for the Redis store that is a `FLUSHDB` on the cache connection, not a prefix-aware delete — every booting pod would wipe the whole logical Redis database mid-rollout. Freshly written caches don't need clearing anyway, since the container starts with an empty `bootstrap/cache`.
 
 > Stock Laravel keeps cache on the `cache` Redis connection (`REDIS_CACHE_DB=1`) and locks on `default` (`REDIS_DB=0`), which limits the blast radius. ElastiCache with cluster mode enabled only has database `0` (Valkey 9 can enable more, but only if `cluster-databases` was set when the cluster was created). On that setup a `cache:clear` also takes sessions, queued jobs and locks.
 
 ---
-
-## Things to Review
-
-Before deploying, make sure to review these configuration values and adjust them for your project:
-
-**Upload & body size limits** — These three values work together and should be kept in sync. If a user uploads a file larger than any of these, the request will be rejected at that layer.
-
-
-| File                     | Setting                | Default | Notes                                                                                                                   |
-| ------------------------ | ---------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `confs/php.ini`          | `upload_max_filesize`  | `50M`   | Max size of a single uploaded file                                                                                      |
-| `confs/php.ini`          | `post_max_size`        | `60M`   | Max size of the entire POST body (should be slightly larger than`upload_max_filesize` to account for other form fields) |
-| `confs/nginx/nginx.conf` | `client_max_body_size` | `50m`   | Nginx will reject requests larger than this before PHP even sees them                                                   |
-
-**Content-Security-Policy** — In `confs/nginx/server-common.conf`, there is a commented-out `Content-Security-Policy` header. If your application uses iframes or is embedded by other domains, uncomment it and replace `*.allowed-domain.com` with your actual allowed origins:
 
 ## Timeouts & Shutdown
 
@@ -485,8 +470,8 @@ The rule: request limit < `stopwaitsecs`, and `preStop` + `stopwaitsecs` < `term
 
 | Setting             | Where                                                | Value |
 | ------------------- | ---------------------------------------------------- | ----- |
-| `--timeout`         | `worker` command in `convox.yml`                      | 60    |
-| `termination.grace` | `worker` service in `convox.yml`                      | 70    |
+| `--timeout`         | `queue` command in `convox.yml`                      | 60    |
+| `termination.grace` | `queue` service in `convox.yml`                      | 70    |
 | `retry_after`       | `config/queue.php` (Laravel default)                 | 90    |
 
 On SIGTERM, `queue:work` finishes the job it is running and then exits. These are Laravel's own defaults (`--timeout` 60, `retry_after` 90), so only the grace period needs setting.
@@ -535,6 +520,21 @@ class ImportUsers implements ShouldQueue, Interruptible
 A release counts as an attempt against `--tries`. `queue:restart` never calls `interrupted()` (it lets the current job finish), and `queue:work --once` installs no signal handlers at all; on Convox every deploy sends SIGTERM to the worker daemon, which is the case this covers.
 
 ---
+
+## Things to Review
+
+Before deploying, make sure to review these configuration values and adjust them for your project:
+
+**Upload & body size limits** — These three values work together and should be kept in sync. If a user uploads a file larger than any of these, the request will be rejected at that layer.
+
+
+| File                     | Setting                | Default | Notes                                                                                                                   |
+| ------------------------ | ---------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `confs/php.ini`          | `upload_max_filesize`  | `50M`   | Max size of a single uploaded file                                                                                      |
+| `confs/php.ini`          | `post_max_size`        | `60M`   | Max size of the entire POST body (should be slightly larger than`upload_max_filesize` to account for other form fields) |
+| `confs/nginx/nginx.conf` | `client_max_body_size` | `50m`   | Nginx will reject requests larger than this before PHP even sees them                                                   |
+
+**Content-Security-Policy** — In `confs/nginx/server-common.conf`, there is a commented-out `Content-Security-Policy` header. If your application uses iframes or is embedded by other domains, uncomment it and replace `*.allowed-domain.com` with your actual allowed origins:
 
 ```nginx
 # Uncomment to allow framing from subdomains (and optionally remove X-Frame-Options):

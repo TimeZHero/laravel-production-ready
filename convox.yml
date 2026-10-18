@@ -76,7 +76,7 @@ services:
       cpu: 250
       memory: 1024
 
-  worker:
+  queue:
     build:
       manifest: Dockerfile
     command: php artisan queue:work --tries=3 --timeout=60 --max-time=86400 --max-jobs=1000
