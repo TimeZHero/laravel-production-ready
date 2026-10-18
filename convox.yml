@@ -87,8 +87,20 @@ services:
       cpu: 250
       memory: 1024
 
-timers:
   scheduler:
-    command: php artisan schedule:run
-    schedule: "0 * * * *"
-    service: app
+    build:
+      manifest: Dockerfile
+    command: php artisan schedule:work --whisper
+    internal: true
+    singleton: true
+    health:
+      disable: true
+    termination:
+      grace: 45
+    resources:
+      - db
+      - redis
+    scale:
+      count: 1
+      cpu: 120
+      memory: 256
