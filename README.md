@@ -208,7 +208,7 @@ The two Docker Compose settings you want to configure are:
 
 ### Redis
 
-The image ships with [igbinary](https://github.com/igbinary/igbinary) and [lz4](https://github.com/lz4/lz4) already installed. You can enable the most performant serializer and compression in your `config/database.php`:
+The image ships with [igbinary](https://github.com/igbinary/igbinary) and [lz4](https://github.com/lz4/lz4) already installed. Enable them in `config/database.php`. Leave `persistent` on Laravel's env — stock config already reads it:
 
 ```php
 'redis' => [
@@ -223,6 +223,8 @@ The image ships with [igbinary](https://github.com/igbinary/igbinary) and [lz4](
     ],
 ],
 ```
+
+`compose.yaml` and `convox.yml` set `REDIS_PERSISTENT=true`. Container env wins over `.env`, so a stock app picks this up with no config change, including when `config:cache` runs at container start. Each FPM child or Octane worker reuses one socket per named connection (`default`, `cache`, …) instead of paying a TCP and TLS handshake on every request. The kernel closes that socket when the process exits, so a deploy, a worker restart, and a crash all drop it. ElastiCache Serverless still caps concurrent clients at 65,000, and that cap does not grow with ECPUs, but a web fleet (pods × workers × Laravel's named connections) stays far under it. Skipping the handshake also saves ECPUs, which is what serverless Redis bills.
 
 ---
 

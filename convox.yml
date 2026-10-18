@@ -30,6 +30,8 @@ environment:
   - CACHE_STORE
   - QUEUE_CONNECTION
   - LOG_CHANNEL=stderr
+  # Stock config/database.php reads this. Container env wins over .env.
+  - REDIS_PERSISTENT=true
 
   # Support for multiple server instances
   - APP_MAINTENANCE_DRIVER=cache

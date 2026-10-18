@@ -25,6 +25,7 @@ services:
             SESSION_DOMAIN: '${COMPOSE_PROJECT_NAME}.localhost'
             COMPOSER_AUTH: '${COMPOSER_AUTH:-}'
             VITE_DEV_SERVER_URL: 'https://vite.${COMPOSE_PROJECT_NAME}.localhost'
+            REDIS_PERSISTENT: 'true'
         volumes:
             - '.:/app'
             - '/app/.git'
