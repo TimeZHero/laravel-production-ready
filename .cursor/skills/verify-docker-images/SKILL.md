@@ -25,7 +25,7 @@ High-level steps:
 4. **Build** — Build all 8 Docker images (fpm/roadrunner/swoole via `Dockerfile`, frankenphp via `Dockerfile.frankenphp`)
 5. **Start** — Run all 8 containers with the correct env vars and volume mounts (dev containers need bind-mount)
 6. **Wait** — Poll each container until its health check passes (up to 120 seconds each)
-7. **Verify** — Execute **every single check** from the REFERENCE.md checklist, recording PASS or FAIL
+7. **Verify** — Execute **every single check** from the REFERENCE.md checklist, recording PASS or FAIL. The shutdown checks (section P) stop their container, so run them last
 8. **Report** — Print a summary table grouped by container, with total pass/fail counts
 9. **Clean up** — Stop and remove all containers, remove images, delete the temp directory
 

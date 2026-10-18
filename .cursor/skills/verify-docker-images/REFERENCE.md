@@ -123,6 +123,17 @@ return [
 ];
 ```
 
+Append a slow route to `$TMPDIR/routes/web.php`, used by the graceful-shutdown
+checks (section P):
+
+```php
+Route::get('/slow', function () {
+    sleep(10);
+
+    return 'slow-done';
+});
+```
+
 ### 7. Create the .env file
 
 Write to `$TMPDIR/.env`:
@@ -502,6 +513,40 @@ which defaults to `true`.
 |---|-------|-----------|---------|----------|
 | O1 | Default command migrates | all 8 containers | `docker logs CONTAINER 2>&1` | Contains `running migrations` |
 | O2 | Disabled migrations are skipped | all 4 production images | `docker run --rm -e RUN_MIGRATIONS=false -e APP_ENV=testing -e APP_KEY=base64:dGVzdGtleWZvcnRlc3RpbmcxMjM0NTY3ODkwYWJjZGU= -e DB_CONNECTION=null -e LOG_CHANNEL=stderr -e CACHE_STORE=array lpr-test:ENGINE-production php artisan --version 2>&1` | Contains `Startup complete` and `Laravel Framework`; does **not** contain `running migrations` |
+
+---
+
+### P. Shutdown — In-Flight Requests
+
+A deploy stops the container while requests are still running. The stop signal
+must drain them instead of dropping them. These checks **stop the container**,
+so run them last, after every other check on that container.
+
+Start a 10-second request, stop the container two seconds into it, and time the
+stop:
+
+```bash
+curl -s -m 60 -o /tmp/lpr-slow-CONTAINER.txt -w '%{http_code}' http://127.0.0.1:PORT/slow > /tmp/lpr-slow-CONTAINER.code &
+CURL_PID=$!
+sleep 2
+START=$(date +%s)
+docker stop -t 90 CONTAINER
+echo "stop took $(( $(date +%s) - START ))s"
+wait $CURL_PID
+cat /tmp/lpr-slow-CONTAINER.code /tmp/lpr-slow-CONTAINER.txt
+```
+
+| # | Check | Applies to | Command | Expected |
+|---|-------|-----------|---------|----------|
+| P1 | In-flight request completes | nginx-based production (3 containers) | See script above | Status `200` and body `slow-done` |
+| P2 | Stop waits for the request, not the timeout | nginx-based production (3 containers) | Same script, `stop took` line | Between `5` and `30` seconds: long enough to have waited for the request, far below the 90-second kill |
+| P3 | Stop signal reaches Octane | frankenphp-production | Same script, `stop took` line | Under `5` seconds. `90` means bash swallowed SIGTERM (the `php` wrapper lost its `exec`) |
+
+FrankenPHP is expected to drop the in-flight request (curl exit `52`): on
+SIGTERM, Octane asks Caddy to stop and then exits at once, killing the server
+([laravel/octane#970](https://github.com/laravel/octane/issues/970)). Production
+covers this with the `preStop` sleep in `convox.yml`, so do not record it as a
+failure.
 
 ---
 
