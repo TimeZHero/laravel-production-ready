@@ -11,4 +11,4 @@ do
     index=$((index+1))
 done
 
-/usr/local/bin/frankenphp php-cli ${args[@]}
+exec /usr/local/bin/frankenphp php-cli "${args[@]}"
