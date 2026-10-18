@@ -43,6 +43,8 @@ services:
     domain: ${APP_DOMAIN}
     build:
       manifest: Dockerfile
+    environment:
+      - RUN_MIGRATIONS=true
     health:
       grace: 30
       interval: 10
@@ -74,6 +76,8 @@ services:
     build:
       manifest: Dockerfile
     command: php artisan queue:work --tries=3 --timeout=90 --max-time=86400 --max-jobs=1000
+    environment:
+      - RUN_MIGRATIONS=false
     internal: true
     health:
       disable: true
@@ -92,6 +96,8 @@ services:
     build:
       manifest: Dockerfile
     command: php artisan schedule:work --whisper
+    environment:
+      - RUN_MIGRATIONS=false
     internal: true
     health:
       disable: true

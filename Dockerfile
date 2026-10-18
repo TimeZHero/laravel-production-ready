@@ -68,6 +68,7 @@ RUN ln -sf /usr/bin/php${PHP_VERSION} /usr/bin/php; \
     chown -R ${WWWUSER}:${WWWUSER} /app /run /var/lib/nginx /var/log/nginx
 
 ENV HOME=/home/${USER}
+ENV RUN_MIGRATIONS=true
 
 # Supervisord
 COPY --link confs/supervisor.d/supervisord.conf /etc/supervisord.conf

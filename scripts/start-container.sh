@@ -22,12 +22,13 @@ if [ "${APP_ENV:-production}" = "local" ]; then
     fi
 fi
 
-echo "running migrations..."
-if php artisan migrate:status >/dev/null; then
-    php artisan migrate --force --isolated=1
-else
-    # No migrations table yet: nothing exists to lock against, isolation is moot.
-    php artisan migrate --force
+if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
+    echo "running migrations..."
+    if php artisan migrate:status >/dev/null; then
+        php artisan migrate --force --isolated=1
+    else
+        php artisan migrate --force
+    fi
 fi
 
 # Production environment

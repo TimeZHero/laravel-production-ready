@@ -83,6 +83,7 @@ RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/bin/ 
     chown -R ${WWWUSER}:${WWWUSER} /app /config /data
 
 ENV HOME=/home/${USER}
+ENV RUN_MIGRATIONS=true
 ENV OCTANE_SERVER=frankenphp
 ENV OCTANE_PORT=8080
 

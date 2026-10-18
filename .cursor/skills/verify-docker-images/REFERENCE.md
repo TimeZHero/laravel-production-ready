@@ -493,6 +493,18 @@ docker exec CONTAINER sh -c 'for f in /proc/[0-9]*/cmdline; do tr "\0" " " < "$f
 
 ---
 
+### O. Startup — Migration Policy
+
+Migrations are controlled by the explicit `RUN_MIGRATIONS` environment variable,
+which defaults to `true`.
+
+| # | Check | Applies to | Command | Expected |
+|---|-------|-----------|---------|----------|
+| O1 | Default command migrates | all 8 containers | `docker logs CONTAINER 2>&1` | Contains `running migrations` |
+| O2 | Disabled migrations are skipped | all 4 production images | `docker run --rm -e RUN_MIGRATIONS=false -e APP_ENV=testing -e APP_KEY=base64:dGVzdGtleWZvcnRlc3RpbmcxMjM0NTY3ODkwYWJjZGU= -e DB_CONNECTION=null -e LOG_CHANNEL=stderr -e CACHE_STORE=array lpr-test:ENGINE-production php artisan --version 2>&1` | Contains `Startup complete` and `Laravel Framework`; does **not** contain `running migrations` |
+
+---
+
 ## Cleanup
 
 After all checks are complete (regardless of pass/fail), run:

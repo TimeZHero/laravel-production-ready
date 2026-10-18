@@ -375,15 +375,17 @@ Not implemented in this repo — documented here as the natural next step if Opt
 
 ## Container Startup
 
-`scripts/start-container.sh` is the entrypoint for every nginx-based image. It installs dependencies in local only, runs migrations, then warms the caches in production before handing off to the image's `CMD`.
+`scripts/start-container.sh` is the entrypoint for every image. It installs dependencies in local only, runs migrations when `RUN_MIGRATIONS=true`, then warms the caches in production before handing off to the image's `CMD`. The Dockerfiles default `RUN_MIGRATIONS=true`, preserving ordinary Docker and Sail behavior. The Convox example makes the policy explicit: `app` enables it; `worker` and `scheduler` set it to `false`.
 
 ### Migrations
 
 ```sh
-if php artisan migrate:status >/dev/null; then
-    php artisan migrate --force --isolated=1
-else
-    php artisan migrate --force
+if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
+    if php artisan migrate:status >/dev/null; then
+        php artisan migrate --force --isolated=1
+    else
+        php artisan migrate --force
+    fi
 fi
 ```
 
@@ -393,11 +395,11 @@ fi
 
 The `migrate:status` check exists for one narrow case: a brand-new database has no `migrations` table yet, so there is also nothing for `--isolated` to lock against — taking the lock itself fails, regardless of cache store. `migrate:status` exits non-zero exactly when that table is missing, so the entrypoint falls back to a plain `migrate --force` only then, bootstrapping the schema (including the `cache`/`cache_locks` tables, if `CACHE_STORE=database`) in one unlocked pass. Every later boot finds the table and takes the isolated path. This keeps first boot zero-config for local dev and fresh deploys alike, with one caveat: if the very first deploy itself starts with more than one replica, both can see the same missing table and race on the same bootstrap migration — deploy the first release with a single replica.
 
-Running migrations from the entrypoint keeps this repo dependency-free, but every booting container attempts them. For stricter control, run them once per release from CI (`convox build` → `convox run app php artisan migrate --force` → `convox releases promote`) and delete the block.
+Running migrations at container start keeps this repo dependency-free, but every booting app container attempts them. For stricter control, run them once per release from CI (`convox build` → `convox run app php artisan migrate --force` → `convox releases promote`) and set `RUN_MIGRATIONS=false` for every service.
 
 ### Caches
 
-`php artisan optimize` runs in production only. It writes `bootstrap/cache/*.php` on the container's **own** filesystem — it has nothing to do with `CACHE_STORE`, so there is no shared state to inherit and every container has to run it for itself.
+`php artisan optimize` runs in production for every role. It writes `bootstrap/cache/*.php` on the container's **own** filesystem — it has nothing to do with `CACHE_STORE`, so there is no shared state to inherit and every app, worker, and scheduler container has to run it for itself.
 
 `optimize:clear` is deliberately **not** run first. It includes `cache:clear`, and for the Redis store that is a `FLUSHDB` on the cache connection, not a prefix-aware delete — every booting pod would wipe the whole logical Redis database mid-rollout. Freshly written caches don't need clearing anyway, since the container starts with an empty `bootstrap/cache`.
 
