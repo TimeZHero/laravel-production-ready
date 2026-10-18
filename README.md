@@ -489,7 +489,7 @@ The Caddy volumes below are **not** set by default, but they are needed in a sin
 
 ## Additional Notes
 
-- **Process supervision & restarts** — In the nginx-based images, supervisord manages each process with `autorestart=true`, `startsecs=1` and `startretries=10`. A process that crashes after running normally is restarted immediately and indefinitely. A process that keeps dying within a second of starting is retried 10 times with growing delays (1s, 2s, 3s…, about 55s total) and then left in `FATAL`.
+- **Process supervision & restarts** — In the nginx-based images, supervisord manages each process with `autorestart=true`, `startsecs=1`, `startretries=10`, `stopasgroup=true` and `killasgroup=true`. A process that crashes after running normally is restarted immediately and indefinitely. A process that keeps dying within a second of starting is retried 10 times with growing delays (1s, 2s, 3s…, about 55s total) and then left in `FATAL`. `stopasgroup` and `killasgroup` send those signals to the whole process group, so nginx workers, php-fpm children and Octane workers die with the master instead of keeping the socket or port.
 
   Those two settings work together and both are needed: `startretries` only counts crashes that happen inside `startsecs`, so the old `startretries=0` sent a process to `FATAL` on its first fast crash — a brief database outage could kill a process permanently while the container stayed up and the orchestrator saw nothing wrong.
 
