@@ -1,8 +1,3 @@
----
-description: Project context and key decisions
-alwaysApply: true
----
-
 # Laravel Production-Ready Docker Images
 
 A reference/copy-paste repository providing stateless, performant Docker images for Laravel, designed for Kubernetes and deployed via Convox. Compatible with Laravel Sail for local development.
