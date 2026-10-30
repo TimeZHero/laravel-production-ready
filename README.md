@@ -426,7 +426,7 @@ Not implemented in this repo — documented here as the natural next step if Opt
 
 ## Container Startup
 
-`scripts/start-container.sh` is the entrypoint for every image. It installs dependencies in local only, runs migrations when `RUN_MIGRATIONS=true`, then warms the caches in production before handing off to the image's `CMD`. The Dockerfiles default `RUN_MIGRATIONS=true`, preserving ordinary Docker and Sail behavior. The Convox example makes the policy explicit: `app` enables it; `queue` and `scheduler` set it to `false`.
+`scripts/start-container.sh` is the entrypoint for every image. It installs dependencies in local only, runs migrations when `RUN_MIGRATIONS=true`, warms the caches in production, then prints `php artisan about` (environment, cache state, drivers) before handing off to the image's `CMD`. The Dockerfiles default `RUN_MIGRATIONS=true`, preserving ordinary Docker and Sail behavior. The Convox example makes the policy explicit: `app` enables it; `queue` and `scheduler` set it to `false`.
 
 ### Migrations
 
