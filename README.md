@@ -14,6 +14,7 @@ Includes an ideal local environment by leveraging [Laravel Sail](https://github.
   - [Development](#development)
   - [Editor Files](#editor-files)
   - [Local Packages](#local-packages)
+  - [Composer Policies](#composer-policies)
   - [Compose & Convox](#compose--convox)
   - [Redis](#redis)
 - [Environment Variables](#environment-variables)
@@ -176,6 +177,37 @@ The `editor/` folder contains starter versions of `.dockerignore`, `.gitignore`,
 ### Local Packages
 
 If you maintain local Composer packages committed in the same repository, place them inside a `packages/` folder at the root of your project. The Docker build already accounts for this.
+
+### Composer Policies
+
+Composer 2.11 can withhold newly published package versions for a waiting period ([`policy.cooldown`](https://getcomposer.org/doc/06-config.md#cooldown)). Most compromised releases are caught and pulled from Packagist within hours or days, so a short wait keeps them out of your lock file. Add this to your `composer.json`:
+
+```json
+{
+    "require": {
+        "composer": ">=2.11"
+    },
+    "config": {
+        "policy": {
+            "cooldown": {
+                "period": "3 days"
+            }
+        }
+    }
+}
+```
+
+Then refresh the lock file hash once, because a `policy` change marks `composer.lock` as outdated:
+
+```bash
+sail composer update --lock
+```
+
+- **Scope** — the cooldown applies when versions are resolved (`update`, `require`). `composer install` from an existing lock file, which is what the Docker build and container startup run, is not affected. A full `composer update` re-checks every locked package, so anything locked less than 3 days ago is downgraded to the newest release outside the window.
+- **`"composer": ">=2.11"`** — older Composer versions ignore `policy.cooldown` without a warning and lock the newest release. This constraint makes them fail with a clear error instead. It is a platform package: nothing is downloaded and nothing is checked at runtime. Run Composer through Sail, which uses the version installed in the image.
+- **Clock** — the period is measured from Packagist's `published-time`, which package authors cannot backdate.
+- **Private registries** — every Composer repository must provide `published-time`, otherwise `update` errors out and names the package. If yours cannot, set [`require-published-time`](https://getcomposer.org/doc/05-repositories.md#require-published-time) to `false` on that repository, or list its packages under `cooldown.ignore`. Path repositories (`packages/`) fall back to the `time` field in each package's `composer.json`, or are let through when there is none.
+- **Urgent security fixes** — bypass it for one run with `composer update vendor/package --no-cooldown`. Other policies (security advisories, malware) still apply. Both are blocked by default in Composer 2.11, so no extra config is needed for them.
 
 ### Compose & Convox
 
@@ -623,7 +655,6 @@ The Caddy volumes below are **not** set by default, but they are needed in a sin
 ## TODO
 
 - **PIE stays out of the Dockerfiles** (on hold). [PIE 1.5](https://thephp.foundation/blog/2026/10/07/pie-1-5-released/) (October 2026) installs several third-party extensions in one command and publishes a build-time binary image (`ghcr.io/php/pie:bin`). The old PHP 8.5 compile gap is also gone: `phpredis` 6.3, `swoole/swoole`, igbinary, and xdebug all publish PIE packages for 8.5. PIE still only installs Packagist `php-ext` packages. Bundled extensions (`ctype`, `curl`, `gd`, `intl`, `mbstring`, `pdo_mysql`, `zip`, FPM, and the rest of the Laravel set) stay on Alpine `apk` or FrankenPHP's `install-php-extensions`. Handing redis, igbinary, swoole, and xdebug to PIE beside that leaves two installers for four extensions, and on Alpine it throws away the prebuilt packages. Revisit only when one installer covers the whole set. `install-php-extensions` has not switched over ([mlocati/docker-php-extension-installer#1125](https://github.com/mlocati/docker-php-extension-installer/issues/1125) is still open).
-- **Composer dependency cooldown** (on hold until Composer 2.11). The setting is `config.policy.cooldown.period` (for example `"7 days"`). The clock is Packagist's registry-owned `published-time`, which package authors cannot backdate; that field has been live since [packagist#1765](https://github.com/composer/packagist/pull/1765) (June 2026). The Composer side merged in [composer#12692](https://github.com/composer/composer/pull/12692) on 1 October 2026 and ships in 2.11, which is not released. Stable is 2.10.3 (27 August 2026). These images install Composer from getcomposer.org, so they get stable, and the key is not available there yet. A plugin that reads the author-controlled `time` field is the bypass `published-time` exists to close, so it is not a stand-in.
 - Stress test to find optimal/reference values in `convox.yml` (Kubernetes) and PHP-FPM/worker pool configurations.
 
 ---
