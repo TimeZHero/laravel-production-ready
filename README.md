@@ -15,6 +15,7 @@ Includes an ideal local environment by leveraging [Laravel Sail](https://github.
   - [Editor Files](#editor-files)
   - [Local Packages](#local-packages)
   - [Composer Policies](#composer-policies)
+  - [Tooling](#tooling)
   - [Compose & Convox](#compose--convox)
   - [Redis](#redis)
 - [Environment Variables](#environment-variables)
@@ -140,7 +141,7 @@ caddy() {
 }
 ```
 
-2. Once per machine: `caddy create`, then `caddy trust` to trust the root certificate. Any other command (`caddy start`, `caddy stop`, `caddy logs`) is proxied over to the docker container. You only need to start it once per machine, not per-project.
+2. Once per machine: `caddy create`, then `caddy trust` to trust the root certificate. Any other command (`caddy start`, `caddy stop`, `caddy logs`) is proxied over to the docker container. You only need to start it once per machine, not per-project. The app joins the external `caddy` network, so `sail up` fails until it exists: create it, never publish ports as a fallback.
 3. Merge this repo's `compose.yaml` example into your project's compose file and **delete the `ports` mappings** — the proxy replaces them. `APP_URL`, `SESSION_DOMAIN` and `VITE_DEV_SERVER_URL` are injected from the project folder name; container env wins over `.env`, so there's nothing to set.
 4. Point Vite at the injected URL in `vite.config.js` — without it the `hot` file defaults to `http://localhost:5173`, which is no longer published:
 
@@ -208,6 +209,33 @@ sail composer update --lock
 - **Clock** — the period is measured from Packagist's `published-time`, which package authors cannot backdate.
 - **Private registries** — every Composer repository must provide `published-time`, otherwise `update` errors out and names the package. If yours cannot, set [`require-published-time`](https://getcomposer.org/doc/05-repositories.md#require-published-time) to `false` on that repository, or list its packages under `cooldown.ignore`. Path repositories (`packages/`) fall back to the `time` field in each package's `composer.json`, or are let through when there is none.
 - **Urgent security fixes** — bypass it for one run with `composer update vendor/package --no-cooldown`. Other policies (security advisories, malware) still apply. Both are blocked by default in Composer 2.11, so no extra config is needed for them.
+
+### Tooling
+
+Pest for tests, Pint for code style, Larastan for static analysis:
+
+```bash
+sail composer require pestphp/pest --dev --with-all-dependencies
+sail pest --init
+sail composer require --dev larastan/larastan laravel/pint
+```
+
+- **Pest with Test Impact Analysis** — add `pest()->tia()->always()->locally();` to `tests/Pest.php`. Locally Pest then runs only the tests affected by your changes; CI still runs the full suite. TIA needs a coverage driver: the development image runs Xdebug with `xdebug.mode=debug,coverage` ([`confs/xdebug.ini`](confs/xdebug.ini)).
+- **Larastan** — copy [`stubs/phpstan.neon`](stubs/phpstan.neon) to the project root.
+- **Pint** — always run it on the whole project (`sail pint`), never with `--dirty`: the app container hides `.git` behind the `/app/.git` volume in `compose.yaml`, so git-based options fail inside it.
+
+Run both checks with one command by adding a `lint` script to `composer.json`, then `sail composer lint`:
+
+```json
+{
+    "scripts": {
+        "lint": [
+            "@php vendor/bin/pint --test",
+            "@php vendor/bin/phpstan analyse --memory-limit=1G"
+        ]
+    }
+}
+```
 
 ### Compose & Convox
 
