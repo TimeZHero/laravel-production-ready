@@ -516,6 +516,32 @@ which defaults to `true`.
 
 ---
 
+### Q. Static Assets — Caching and Access Log
+
+Vite writes content-hashed files to `public/build/assets/`, so each URL always
+serves the same bytes. nginx marks them `immutable` and leaves successful hits
+out of the access log. Failed requests under the same path are still logged.
+Production images only, since development serves assets from the Vite dev server.
+
+Pick a built asset first:
+
+```bash
+ASSET=$(docker exec CONTAINER sh -c 'ls /app/public/build/assets | head -1')
+```
+
+| # | Check | Applies to | Command | Expected |
+|---|-------|-----------|---------|----------|
+| Q1 | Hashed asset is immutable | nginx-based production (3 containers) | `curl -s -D - -o /dev/null http://127.0.0.1:PORT/build/assets/$ASSET` | Status `200`; exactly one `Cache-Control` header, equal to `public, max-age=31536000, immutable` |
+| Q2 | Security headers kept on assets | nginx-based production (3 containers) | Same curl | `X-Frame-Options: SAMEORIGIN` and `X-Content-Type-Options: nosniff` present |
+| Q3 | Manifest is not immutable | nginx-based production (3 containers) | `curl -s -D - -o /dev/null http://127.0.0.1:PORT/build/manifest.json` | No `immutable` in any `Cache-Control` header |
+| Q4 | Missing asset is not cacheable | nginx-based production (3 containers) | `curl -s -D - -o /dev/null http://127.0.0.1:PORT/build/assets/missing-0000.js` | Status `404`; no `immutable` in any `Cache-Control` header |
+| Q5 | Dotfiles still denied under assets | nginx-based production (3 containers) | `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:PORT/build/assets/.env` | `403` |
+| Q6 | Successful asset hits are not logged | nginx-based production (3 containers) | Request the asset (200), then again with `-H 'If-None-Match: <its ETag>'` (304); then `docker logs CONTAINER 2>&1 \| grep "GET /build/assets/$ASSET"` | No output |
+| Q7 | Failed asset requests are logged | nginx-based production (3 containers) | After Q4 and Q5: `docker logs CONTAINER 2>&1 \| grep -E 'GET /build/assets/(missing-0000.js\|\.env)'` | Two lines, with status `404` and `403` |
+| Q8 | Traversal out of assets is logged | nginx-based production (3 containers) | `curl -s --path-as-is -o /dev/null http://127.0.0.1:PORT/build/assets/../manifest.json`, then `docker logs CONTAINER 2>&1 \| grep 'assets/../manifest.json'` | One line (nginx normalizes the URI to `/build/manifest.json`, outside the skipped path) |
+
+---
+
 ### P. Shutdown — In-Flight Requests
 
 A deploy stops the container while requests are still running. The stop signal

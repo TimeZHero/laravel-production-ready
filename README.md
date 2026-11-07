@@ -590,14 +590,16 @@ Before deploying, make sure to review these configuration values and adjust them
 | `confs/php.ini`          | `post_max_size`        | `60M`   | Max size of the entire POST body (should be slightly larger than`upload_max_filesize` to account for other form fields) |
 | `confs/nginx/nginx.conf` | `client_max_body_size` | `50m`   | Nginx will reject requests larger than this before PHP even sees them                                                   |
 
-**Content-Security-Policy** — In `confs/nginx/server-common.conf`, there is a commented-out `Content-Security-Policy` header. If your application uses iframes or is embedded by other domains, uncomment it and replace `*.allowed-domain.com` with your actual allowed origins:
+**Content-Security-Policy** — In `confs/nginx/security-headers.conf`, there is a commented-out `Content-Security-Policy` header. If your application uses iframes or is embedded by other domains, uncomment it and replace `*.allowed-domain.com` with your actual allowed origins:
 
 ```nginx
 # Uncomment to allow framing from subdomains (and optionally remove X-Frame-Options):
 # add_header Content-Security-Policy "frame-ancestors 'self' *.allowed-domain.com" always;
 ```
 
-This file is included by both the PHP-FPM and Octane Nginx configs (`confs/nginx/php-fpm.conf` and `confs/nginx/octane.conf`), so the change applies everywhere.
+This file is included at server level by both the PHP-FPM and Octane Nginx configs (through `confs/nginx/server-common.conf`) and again in every location that sets its own headers, so the change applies everywhere. Any new `location` with an `add_header` must include it too: nginx drops inherited headers from a location that declares its own.
+
+**Static assets** — Files under `public/build/assets/` are Vite output with a content hash in the name, so nginx serves them with `Cache-Control: public, max-age=31536000, immutable`; a deploy changes the file names, not their content. `public/build/manifest.json` and other unhashed files in `public/` are not covered. Successful hits (2xx, 304) on those assets are left out of the access log together with `/up`, while 4xx/5xx under the same path are still logged. If a project serves unhashed files from `/build/assets/`, remove the `location /build/assets/` block.
 
 ---
 

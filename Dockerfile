@@ -75,6 +75,7 @@ COPY --link confs/supervisor.d/supervisord.conf /etc/supervisord.conf
 # Configure Nginx
 COPY --link confs/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY --link confs/nginx/server-common.conf /etc/nginx/server-common.conf
+COPY --link confs/nginx/security-headers.conf /etc/nginx/security-headers.conf
 COPY --link confs/supervisor.d/nginx.conf /etc/supervisor.d/nginx.conf
 # Configure PHP
 COPY --link confs/php.ini /etc/php${PHP_VERSION}/conf.d/app.ini
