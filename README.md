@@ -343,13 +343,14 @@ convox rack params set proxy_protocol=true -r <rack>
 
 Infrastructure settings like a fixed `scale.count` only cover the services defined in *this repo's* `convox.yml`, and rolling deploys briefly run old and new Processes side by side. For safety that travels with the application regardless of how it's hosted, enforce the guarantees inside `AppServiceProvider::boot()`.
 
-This section isn't scheduler-specific — it's a home for any cross-cutting, multi-replica safeguard the app should enforce on its own, independent of the infrastructure running it:
+This section isn't scheduler-specific — it's a home for any cross-cutting safeguard the app should enforce on its own, independent of the infrastructure running it:
 
 ```php
 <?php
 
 namespace App\Providers;
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Queue\Worker;
 use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\ServiceProvider;
@@ -358,6 +359,8 @@ class AppServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
+        Model::shouldBeStrict(! $this->app->isProduction());
+
         Schedule::alwaysOnOneServer();
 
         Worker::$flushStickyConnections = true;
@@ -371,6 +374,7 @@ On each database connection in `config/database.php` (`mysql`, `pgsql`, …), al
 'sticky' => true,
 ```
 
+- **`Model::shouldBeStrict()`** turns three silent Eloquent mistakes into exceptions outside production: lazy loading (N+1 queries), filling an attribute that isn't in `$fillable` (instead of silently dropping it), and reading an attribute that wasn't selected. Production keeps the lenient behavior, so a missed case degrades instead of failing a request.
 - **`Schedule::alwaysOnOneServer()`** locks every task so only one Process runs it per tick, including the deploy overlap and any later scale-up.
   - `CACHE_STORE` must be shared (`redis` or `database`). `file` and `array` are per container, so every container takes its own lock and runs the task.
   - Maintenance mode and queue/schedule pauses use the same store: `convox.yml` leaves `APP_MAINTENANCE_STORE` empty, which falls back to `CACHE_STORE`.
