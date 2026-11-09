@@ -222,7 +222,7 @@ sail composer require --dev larastan/larastan laravel/pint
 
 - **Pest with Test Impact Analysis** — add `pest()->tia()->always()->locally();` to `tests/Pest.php`. Locally Pest then runs only the tests affected by your changes; CI still runs the full suite. TIA needs a coverage driver: the development image runs Xdebug with `xdebug.mode=debug,coverage` ([`confs/xdebug.ini`](confs/xdebug.ini)).
 - **Larastan** — copy [`stubs/phpstan.neon`](stubs/phpstan.neon) to the project root.
-- **Pint** — always run it on the whole project (`sail pint`), never with `--dirty`: the app container hides `.git` behind the `/app/.git` volume in `compose.yaml`, so git-based options fail inside it.
+- **Pint** — run it on the whole project (`sail pint`). `--dirty` works only in the main checkout: in a git worktree, `.git` is a pointer to a host path the container cannot see, so git-based options fail inside it.
 
 Run both checks with one command by adding a `lint` script to `composer.json`, then `sail composer lint`:
 

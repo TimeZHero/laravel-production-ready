@@ -224,6 +224,9 @@ COPY --link confs/xdebug.ini /etc/php${PHP_VERSION}/conf.d/50_xdebug.ini
 RUN rm -f /etc/supervisor.d/php-fpm.conf /etc/supervisor.d/octane.conf
 COPY --link confs/supervisor.d/dev.conf /etc/supervisor.d/dev.conf
 
+# Docker Desktop shows the bind-mounted /app as root-owned, which git refuses as dubious ownership
+RUN git config --system --add safe.directory /app
+
 # Switch to non-root user for runtime
 USER ${WWWUSER}
 

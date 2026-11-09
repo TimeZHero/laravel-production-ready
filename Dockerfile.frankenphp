@@ -184,6 +184,9 @@ COPY --link confs/xdebug.ini ${PHP_INI_DIR}/conf.d/xdebug-config.ini
 COPY --link --chmod=755 scripts/php.frankenphp.sh /usr/local/bin/php
 ENV PHP_BINARY=/usr/local/bin/php
 
+# Docker Desktop shows the bind-mounted /app as root-owned, which git refuses as dubious ownership
+RUN git config --system --add safe.directory /app
+
 # Switch to non-root user for runtime
 USER ${WWWUSER}
 

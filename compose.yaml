@@ -28,7 +28,8 @@ services:
             REDIS_PERSISTENT: 'true'
         volumes:
             - '.:/app'
-            - '/app/.git'
+            # Read-only: container code (npm/composer scripts) must not plant git hooks or config that run on the host
+            - './.git:/app/.git:ro'
         labels:
             caddy: '${COMPOSE_PROJECT_NAME}.localhost'
             caddy.reverse_proxy: '{{upstreams 8080}}'
