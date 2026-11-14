@@ -1,0 +1,1256 @@
+{
+  "version": "2.2.0",
+  "summary": {
+    "title": "Laravel production-ready images",
+    "owner": "",
+    "id": 0,
+    "description": "Production topology of a Laravel app built from these images and deployed with convox.yml."
+  },
+  "detail": {
+    "contributors": [],
+    "reviewer": "",
+    "diagramTop": 1,
+    "threatTop": 21,
+    "diagrams": [
+      {
+        "id": 0,
+        "title": "Production (Convox)",
+        "diagramType": "STRIDE",
+        "placeholder": "Production topology",
+        "thumbnail": "./public/content/images/thumbnail.stride.jpg",
+        "version": "2.2.0",
+        "cells": [
+          {
+            "id": "e578893d-fa7e-4f7b-9d25-da99cfac466a",
+            "shape": "trust-boundary-box",
+            "zIndex": -1,
+            "visible": true,
+            "position": {
+              "x": 270,
+              "y": 200
+            },
+            "size": {
+              "width": 780,
+              "height": 760
+            },
+            "attrs": {
+              "headerText": {
+                "text": "Convox rack (Kubernetes)"
+              }
+            },
+            "data": {
+              "type": "tm.BoundaryBox",
+              "name": "Convox rack (Kubernetes)",
+              "description": "",
+              "isTrustBoundary": true,
+              "hasOpenThreats": false
+            }
+          },
+          {
+            "id": "36dafecb-68e8-456a-ac5a-f2671f8588ac",
+            "shape": "actor",
+            "zIndex": 2,
+            "visible": true,
+            "position": {
+              "x": 40,
+              "y": 260
+            },
+            "size": {
+              "width": 160,
+              "height": 80
+            },
+            "attrs": {
+              "text": {
+                "text": "Visitor"
+              },
+              "body": {
+                "stroke": "#333333",
+                "strokeWidth": 1.5,
+                "strokeDasharray": null
+              }
+            },
+            "data": {
+              "type": "tm.Actor",
+              "name": "Visitor",
+              "description": "Browser or API client on the internet.",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "providesAuthentication": false
+            }
+          },
+          {
+            "id": "2717e204-651e-42bf-a894-22c4a400dc73",
+            "shape": "actor",
+            "zIndex": 2,
+            "visible": true,
+            "position": {
+              "x": 40,
+              "y": 620
+            },
+            "size": {
+              "width": 160,
+              "height": 80
+            },
+            "attrs": {
+              "text": {
+                "text": "Operator"
+              },
+              "body": {
+                "stroke": "#333333",
+                "strokeWidth": 1.5,
+                "strokeDasharray": null
+              }
+            },
+            "data": {
+              "type": "tm.Actor",
+              "name": "Operator",
+              "description": "Developer or CI running convox CLI commands (deploy, run, env).",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "providesAuthentication": false
+            }
+          },
+          {
+            "id": "362b4757-7cd8-4d7e-b10f-e9c1c956f78f",
+            "shape": "process",
+            "zIndex": 2,
+            "visible": true,
+            "position": {
+              "x": 300,
+              "y": 240
+            },
+            "size": {
+              "width": 140,
+              "height": 140
+            },
+            "attrs": {
+              "text": {
+                "text": "Convox ingress / load balancer"
+              },
+              "body": {
+                "stroke": "#333333",
+                "strokeWidth": 1.5,
+                "strokeDasharray": null
+              }
+            },
+            "data": {
+              "type": "tm.Process",
+              "name": "Convox ingress / load balancer",
+              "description": "Terminates TLS and forwards X-Forwarded-* headers.",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [
+                {
+                  "id": "f8c01d19-7299-4097-9b48-a436bfca6144",
+                  "title": "Client IP spoofing via X-Forwarded-For",
+                  "status": "Open",
+                  "severity": "Medium",
+                  "type": "Spoofing",
+                  "description": "Rate limits and logs keyed on client IP trust forwarded headers.",
+                  "mitigation": "TrustProxies documented; the real client IP needs rack param proxy_protocol=true, off by default.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 1,
+                  "score": ""
+                },
+                {
+                  "id": "54ccbc2d-1f60-42ca-9829-9572894cd1b3",
+                  "title": "Traffic interception",
+                  "status": "Mitigated",
+                  "severity": "High",
+                  "type": "Information disclosure",
+                  "description": "Plain HTTP between visitor and app.",
+                  "mitigation": "TLS terminated at the Convox ingress for the service domain.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 2,
+                  "score": ""
+                }
+              ],
+              "hasOpenThreats": true,
+              "handlesCardPayment": false,
+              "handlesGoodsOrServices": false,
+              "isWebApplication": false,
+              "privilegeLevel": "UID 1000"
+            }
+          },
+          {
+            "id": "98a14bce-f593-4346-afba-78823c5a64e7",
+            "shape": "process",
+            "zIndex": 2,
+            "visible": true,
+            "position": {
+              "x": 560,
+              "y": 240
+            },
+            "size": {
+              "width": 140,
+              "height": 140
+            },
+            "attrs": {
+              "text": {
+                "text": "App container"
+              },
+              "body": {
+                "stroke": "#333333",
+                "strokeWidth": 1.5,
+                "strokeDasharray": null
+              }
+            },
+            "data": {
+              "type": "tm.Process",
+              "name": "App container",
+              "description": "nginx + PHP-FPM/Octane (supervisord) or FrankenPHP; entrypoint start-container.sh.",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [
+                {
+                  "id": "a866e7a0-3f8b-4eed-b769-67292ae1b7b3",
+                  "title": "Access to dotfiles or arbitrary PHP files",
+                  "status": "Mitigated",
+                  "severity": "High",
+                  "type": "Information disclosure",
+                  "description": "Requests for .env, .git or non-front-controller PHP.",
+                  "mitigation": "nginx denies dotfiles and only executes index.php; security headers via security-headers.conf.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 3,
+                  "score": ""
+                },
+                {
+                  "id": "0388dc38-3daf-48ed-b5e8-2f6f13441df9",
+                  "title": "Debug output leaks internals",
+                  "status": "Mitigated",
+                  "severity": "High",
+                  "type": "Information disclosure",
+                  "description": "Stack traces and env in error pages.",
+                  "mitigation": "convox.yml sets APP_DEBUG=false and APP_ENV=production.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 4,
+                  "score": ""
+                },
+                {
+                  "id": "aab2943f-4f65-4354-b73a-3a88373b8eca",
+                  "title": "Slow requests exhaust workers",
+                  "status": "Mitigated",
+                  "severity": "Medium",
+                  "type": "Denial of service",
+                  "description": "Long requests hold FPM/Octane workers.",
+                  "mitigation": "Nested timeouts: max_execution_time 60, request_terminate_timeout 60s, Convox timeout 60; autoscaling 1-30.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 5,
+                  "score": ""
+                },
+                {
+                  "id": "6d0dd4f6-2897-442f-b6b4-1c727d54eb9f",
+                  "title": "Container breakout from a compromised process",
+                  "status": "Mitigated",
+                  "severity": "Medium",
+                  "type": "Elevation of privilege",
+                  "description": "RCE in the app running as root.",
+                  "mitigation": "All processes run as non-root UID 1000.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 6,
+                  "score": ""
+                },
+                {
+                  "id": "fb23ba53-e215-475e-9804-3bd1503a13a4",
+                  "title": "Concurrent migrations corrupt schema",
+                  "status": "Mitigated",
+                  "severity": "High",
+                  "type": "Tampering",
+                  "description": "Several replicas migrate at once on deploy.",
+                  "mitigation": "migrate --force --isolated=1; unlocked bootstrap only when the migrations table is missing; first deploy with one replica.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 7,
+                  "score": ""
+                },
+                {
+                  "id": "57a9c466-468b-437e-95e6-fe2435b5a873",
+                  "title": "Startup wipes shared cache",
+                  "status": "Mitigated",
+                  "severity": "Medium",
+                  "type": "Denial of service",
+                  "description": "optimize:clear runs FLUSHDB on shared Redis.",
+                  "mitigation": "Entrypoint runs optimize only, never optimize:clear.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 8,
+                  "score": ""
+                }
+              ],
+              "hasOpenThreats": false,
+              "handlesCardPayment": false,
+              "handlesGoodsOrServices": false,
+              "isWebApplication": true,
+              "privilegeLevel": "UID 1000"
+            }
+          },
+          {
+            "id": "efc2edf6-c677-40ce-8bc1-ba2f5025b6f8",
+            "shape": "process",
+            "zIndex": 2,
+            "visible": true,
+            "position": {
+              "x": 560,
+              "y": 480
+            },
+            "size": {
+              "width": 140,
+              "height": 140
+            },
+            "attrs": {
+              "text": {
+                "text": "Queue worker"
+              },
+              "body": {
+                "stroke": "#333333",
+                "strokeWidth": 1.5,
+                "strokeDasharray": null
+              }
+            },
+            "data": {
+              "type": "tm.Process",
+              "name": "Queue worker",
+              "description": "php artisan queue:work, one process per container.",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [
+                {
+                  "id": "bd72cd7a-9a89-4164-9bc3-df0de01553a3",
+                  "title": "Memory exhaustion kills jobs mid-run",
+                  "status": "Mitigated",
+                  "severity": "Medium",
+                  "type": "Denial of service",
+                  "description": "A leaking worker reaches memory_limit and fatals inside a job.",
+                  "mitigation": "--memory=128 restarts the worker between jobs; PHP_MEMORY_LIMIT=256M gives each job a full 128 MB; scale.memory 320 keeps the pod above the PHP limit so PHP stops a runaway job before an OOMKill; --max-jobs/--max-time recycle.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 9,
+                  "score": ""
+                },
+                {
+                  "id": "348fdfeb-93b8-49a5-a4d4-a9dae9569087",
+                  "title": "Job runs twice concurrently",
+                  "status": "Mitigated",
+                  "severity": "Medium",
+                  "type": "Tampering",
+                  "description": "retry_after shorter than the job timeout.",
+                  "mitigation": "--timeout 60 < termination.grace 70 < retry_after 90.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 10,
+                  "score": ""
+                },
+                {
+                  "id": "0f0d26ab-0c35-4792-b260-bd8f0a9c7dd5",
+                  "title": "Job killed on deploy",
+                  "status": "Mitigated",
+                  "severity": "Low",
+                  "type": "Denial of service",
+                  "description": "SIGTERM interrupts a running job.",
+                  "mitigation": "Worker finishes the current job within grace 70; long jobs implement Interruptible.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 11,
+                  "score": ""
+                }
+              ],
+              "hasOpenThreats": false,
+              "handlesCardPayment": false,
+              "handlesGoodsOrServices": false,
+              "isWebApplication": false,
+              "privilegeLevel": "UID 1000"
+            }
+          },
+          {
+            "id": "17142ac7-1e1f-417f-8ceb-65d296db5fe3",
+            "shape": "process",
+            "zIndex": 2,
+            "visible": true,
+            "position": {
+              "x": 560,
+              "y": 700
+            },
+            "size": {
+              "width": 140,
+              "height": 140
+            },
+            "attrs": {
+              "text": {
+                "text": "Scheduler"
+              },
+              "body": {
+                "stroke": "#333333",
+                "strokeWidth": 1.5,
+                "strokeDasharray": null
+              }
+            },
+            "data": {
+              "type": "tm.Process",
+              "name": "Scheduler",
+              "description": "sh -c \"php artisan schedule:list && exec php artisan schedule:work --whisper\".",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [
+                {
+                  "id": "ef9539ab-dc7c-416e-be70-bbc21a802fbc",
+                  "title": "Task runs on several processes",
+                  "status": "Mitigated",
+                  "severity": "Medium",
+                  "type": "Tampering",
+                  "description": "Deploy overlap runs two schedulers.",
+                  "mitigation": "Schedule::alwaysOnOneServer() with a shared CACHE_STORE (README Application Safeguards).",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 12,
+                  "score": ""
+                },
+                {
+                  "id": "0a9ec8e6-2126-4ef9-a433-0cc50353a0f8",
+                  "title": "Task arguments leak into logs",
+                  "status": "Mitigated",
+                  "severity": "Low",
+                  "type": "Information disclosure",
+                  "description": "The scheduler command prints schedule:list at boot, each command with its arguments.",
+                  "mitigation": "README: pass secrets through config, never as scheduled task arguments.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 13,
+                  "score": ""
+                }
+              ],
+              "hasOpenThreats": false,
+              "handlesCardPayment": false,
+              "handlesGoodsOrServices": false,
+              "isWebApplication": false,
+              "privilegeLevel": "UID 1000"
+            }
+          },
+          {
+            "id": "898db4aa-9d54-466a-b4a5-04b3508c5356",
+            "shape": "process",
+            "zIndex": 2,
+            "visible": true,
+            "position": {
+              "x": 300,
+              "y": 620
+            },
+            "size": {
+              "width": 140,
+              "height": 140
+            },
+            "attrs": {
+              "text": {
+                "text": "Image build (CI)"
+              },
+              "body": {
+                "stroke": "#333333",
+                "strokeWidth": 1.5,
+                "strokeDasharray": null
+              }
+            },
+            "data": {
+              "type": "tm.Process",
+              "name": "Image build (CI)",
+              "description": "docker build with composer/npm installs, GIT_TAG/COMMIT_SHA build args.",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [
+                {
+                  "id": "060c22ad-41b1-4449-9909-346d8d34be45",
+                  "title": "Malicious dependency release",
+                  "status": "Mitigated",
+                  "severity": "High",
+                  "type": "Tampering",
+                  "description": "A freshly published compromised package enters the lock file.",
+                  "mitigation": "Composer cooldown (config.policy.cooldown.period) and composer >=2.11 requirement documented in the README.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 14,
+                  "score": ""
+                },
+                {
+                  "id": "cb0bece9-0a6d-4b9c-85f2-0c1618c6f64b",
+                  "title": "Untraceable release",
+                  "status": "Mitigated",
+                  "severity": "Low",
+                  "type": "Repudiation",
+                  "description": "Errors cannot be tied to the deployed code.",
+                  "mitigation": "Release identity is the git tag or commit SHA (stubs/config/deployment.php).",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 15,
+                  "score": ""
+                }
+              ],
+              "hasOpenThreats": false,
+              "handlesCardPayment": false,
+              "handlesGoodsOrServices": false,
+              "isWebApplication": false,
+              "privilegeLevel": "UID 1000"
+            }
+          },
+          {
+            "id": "736ce098-2f8f-46a8-b16e-05d5ad50d6ee",
+            "shape": "store",
+            "zIndex": 2,
+            "visible": true,
+            "position": {
+              "x": 860,
+              "y": 240
+            },
+            "size": {
+              "width": 160,
+              "height": 80
+            },
+            "attrs": {
+              "text": {
+                "text": "Database (MariaDB)"
+              },
+              "body": {
+                "stroke": "#333333",
+                "strokeWidth": 1.5,
+                "strokeDasharray": null
+              }
+            },
+            "data": {
+              "type": "tm.Store",
+              "name": "Database (MariaDB)",
+              "description": "Convox resource db.",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [
+                {
+                  "id": "6713d0d5-f67b-4a7e-a409-bc810202c6ce",
+                  "title": "Credential exposure",
+                  "status": "Mitigated",
+                  "severity": "High",
+                  "type": "Information disclosure",
+                  "description": "DB credentials baked into the image.",
+                  "mitigation": "DB_URL injected at runtime by Convox env; images contain no .env.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 16,
+                  "score": ""
+                }
+              ],
+              "hasOpenThreats": false,
+              "isALog": false,
+              "isEncrypted": false,
+              "isSigned": false,
+              "storesCredentials": true,
+              "storesInventory": false
+            }
+          },
+          {
+            "id": "4001b80c-f271-491b-9a5a-a1360ae53208",
+            "shape": "store",
+            "zIndex": 2,
+            "visible": true,
+            "position": {
+              "x": 860,
+              "y": 480
+            },
+            "size": {
+              "width": 160,
+              "height": 80
+            },
+            "attrs": {
+              "text": {
+                "text": "Redis"
+              },
+              "body": {
+                "stroke": "#333333",
+                "strokeWidth": 1.5,
+                "strokeDasharray": null
+              }
+            },
+            "data": {
+              "type": "tm.Store",
+              "name": "Redis",
+              "description": "Cache, sessions, queues, locks, maintenance flag.",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [
+                {
+                  "id": "5d49d9f4-4810-4d8d-98a8-8568eb8d3130",
+                  "title": "Lost locks or maintenance flag",
+                  "status": "Mitigated",
+                  "severity": "Medium",
+                  "type": "Tampering",
+                  "description": "Per-container stores break cross-replica guarantees.",
+                  "mitigation": "APP_MAINTENANCE_DRIVER=cache with empty APP_MAINTENANCE_STORE falls back to the shared CACHE_STORE.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 17,
+                  "score": ""
+                },
+                {
+                  "id": "92843aa8-9498-42e0-ad87-18fb32d3a685",
+                  "title": "Connection exhaustion",
+                  "status": "Mitigated",
+                  "severity": "Low",
+                  "type": "Denial of service",
+                  "description": "Persistent connections pile up.",
+                  "mitigation": "One socket per process, closed on exit; far below serverless maxclients.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 18,
+                  "score": ""
+                }
+              ],
+              "hasOpenThreats": false,
+              "isALog": false,
+              "isEncrypted": false,
+              "isSigned": false,
+              "storesCredentials": false,
+              "storesInventory": false
+            }
+          },
+          {
+            "id": "ce46c180-8dbe-4959-ab00-d2c8acb64b51",
+            "shape": "store",
+            "zIndex": 2,
+            "visible": true,
+            "position": {
+              "x": 860,
+              "y": 700
+            },
+            "size": {
+              "width": 160,
+              "height": 80
+            },
+            "attrs": {
+              "text": {
+                "text": "Object storage (S3)"
+              },
+              "body": {
+                "stroke": "#333333",
+                "strokeWidth": 1.5,
+                "strokeDasharray": null
+              }
+            },
+            "data": {
+              "type": "tm.Store",
+              "name": "Object storage (S3)",
+              "description": "AWS bucket for uploads.",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [
+                {
+                  "id": "4aceb980-8202-4c62-a47e-f20a298116c3",
+                  "title": "Leaked access keys",
+                  "status": "Open",
+                  "severity": "High",
+                  "type": "Information disclosure",
+                  "description": "Static AWS keys in env.",
+                  "mitigation": "Keys are runtime env vars, not in the image; scoping the IAM policy is left to each project.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 19,
+                  "score": ""
+                }
+              ],
+              "hasOpenThreats": true,
+              "isALog": false,
+              "isEncrypted": false,
+              "isSigned": false,
+              "storesCredentials": true,
+              "storesInventory": false
+            }
+          },
+          {
+            "id": "9b73428c-4dfd-4bb1-9d10-1bc963de7b36",
+            "shape": "store",
+            "zIndex": 2,
+            "visible": true,
+            "position": {
+              "x": 300,
+              "y": 860
+            },
+            "size": {
+              "width": 160,
+              "height": 80
+            },
+            "attrs": {
+              "text": {
+                "text": "Container logs"
+              },
+              "body": {
+                "stroke": "#333333",
+                "strokeWidth": 1.5,
+                "strokeDasharray": null
+              }
+            },
+            "data": {
+              "type": "tm.Store",
+              "name": "Container logs",
+              "description": "stdout/stderr collected by Convox.",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [
+                {
+                  "id": "8fd86b6b-7d98-49e1-9104-ad81732351f9",
+                  "title": "Secrets in logs",
+                  "status": "Mitigated",
+                  "severity": "Medium",
+                  "type": "Information disclosure",
+                  "description": "Boot output prints config.",
+                  "mitigation": "about prints drivers and flags, not secrets; LOG_CHANNEL=stderr keeps logs in one place.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 20,
+                  "score": ""
+                },
+                {
+                  "id": "bb12fda1-7244-462a-9bef-2e49b15bcdd1",
+                  "title": "Missing audit of worker restarts",
+                  "status": "Mitigated",
+                  "severity": "Low",
+                  "type": "Repudiation",
+                  "description": "Restarts look identical.",
+                  "mitigation": "queue:work prints Worker STOPPED <reason> on every exit.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 21,
+                  "score": ""
+                }
+              ],
+              "hasOpenThreats": false,
+              "isALog": true,
+              "isEncrypted": false,
+              "isSigned": false,
+              "storesCredentials": false,
+              "storesInventory": false
+            }
+          },
+          {
+            "id": "c69b2f60-e141-42bd-bbcf-b8918513b3f7",
+            "shape": "flow",
+            "zIndex": 10,
+            "width": 200,
+            "height": 100,
+            "connector": "smooth",
+            "attrs": {
+              "line": {
+                "stroke": "#333333",
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "labels": [
+              "HTTPS request"
+            ],
+            "source": {
+              "cell": "36dafecb-68e8-456a-ac5a-f2671f8588ac"
+            },
+            "target": {
+              "cell": "362b4757-7cd8-4d7e-b10f-e9c1c956f78f"
+            },
+            "vertices": [],
+            "data": {
+              "type": "tm.Flow",
+              "name": "HTTPS request",
+              "description": "",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "protocol": "HTTPS",
+              "isEncrypted": true,
+              "isPublicNetwork": true,
+              "isBidirectional": false
+            }
+          },
+          {
+            "id": "344ae9b4-bc77-4c6d-b765-209514e9a3af",
+            "shape": "flow",
+            "zIndex": 10,
+            "width": 200,
+            "height": 100,
+            "connector": "smooth",
+            "attrs": {
+              "line": {
+                "stroke": "#333333",
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "labels": [
+              "Proxied HTTP"
+            ],
+            "source": {
+              "cell": "362b4757-7cd8-4d7e-b10f-e9c1c956f78f"
+            },
+            "target": {
+              "cell": "98a14bce-f593-4346-afba-78823c5a64e7"
+            },
+            "vertices": [],
+            "data": {
+              "type": "tm.Flow",
+              "name": "Proxied HTTP",
+              "description": "",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "protocol": "HTTP",
+              "isEncrypted": false,
+              "isPublicNetwork": false,
+              "isBidirectional": false
+            }
+          },
+          {
+            "id": "2c6fd91f-57e2-472a-a5b0-62ff701abca8",
+            "shape": "flow",
+            "zIndex": 10,
+            "width": 200,
+            "height": 100,
+            "connector": "smooth",
+            "attrs": {
+              "line": {
+                "stroke": "#333333",
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "labels": [
+              "SQL"
+            ],
+            "source": {
+              "cell": "98a14bce-f593-4346-afba-78823c5a64e7"
+            },
+            "target": {
+              "cell": "736ce098-2f8f-46a8-b16e-05d5ad50d6ee"
+            },
+            "vertices": [],
+            "data": {
+              "type": "tm.Flow",
+              "name": "SQL",
+              "description": "",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "protocol": "MySQL",
+              "isEncrypted": false,
+              "isPublicNetwork": false,
+              "isBidirectional": false
+            }
+          },
+          {
+            "id": "8e970534-84d4-43f1-8f3c-df3778254abc",
+            "shape": "flow",
+            "zIndex": 10,
+            "width": 200,
+            "height": 100,
+            "connector": "smooth",
+            "attrs": {
+              "line": {
+                "stroke": "#333333",
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "labels": [
+              "Cache / session / queue push"
+            ],
+            "source": {
+              "cell": "98a14bce-f593-4346-afba-78823c5a64e7"
+            },
+            "target": {
+              "cell": "4001b80c-f271-491b-9a5a-a1360ae53208"
+            },
+            "vertices": [],
+            "data": {
+              "type": "tm.Flow",
+              "name": "Cache / session / queue push",
+              "description": "",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "protocol": "RESP",
+              "isEncrypted": false,
+              "isPublicNetwork": false,
+              "isBidirectional": false
+            }
+          },
+          {
+            "id": "6afd29f3-f145-487c-955b-f43d1e805b8b",
+            "shape": "flow",
+            "zIndex": 10,
+            "width": 200,
+            "height": 100,
+            "connector": "smooth",
+            "attrs": {
+              "line": {
+                "stroke": "#333333",
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "labels": [
+              "Queue pop / locks"
+            ],
+            "source": {
+              "cell": "efc2edf6-c677-40ce-8bc1-ba2f5025b6f8"
+            },
+            "target": {
+              "cell": "4001b80c-f271-491b-9a5a-a1360ae53208"
+            },
+            "vertices": [],
+            "data": {
+              "type": "tm.Flow",
+              "name": "Queue pop / locks",
+              "description": "",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "protocol": "RESP",
+              "isEncrypted": false,
+              "isPublicNetwork": false,
+              "isBidirectional": false
+            }
+          },
+          {
+            "id": "bcc80813-b76b-42b7-a222-ce048d7eb225",
+            "shape": "flow",
+            "zIndex": 10,
+            "width": 200,
+            "height": 100,
+            "connector": "smooth",
+            "attrs": {
+              "line": {
+                "stroke": "#333333",
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "labels": [
+              "SQL"
+            ],
+            "source": {
+              "cell": "efc2edf6-c677-40ce-8bc1-ba2f5025b6f8"
+            },
+            "target": {
+              "cell": "736ce098-2f8f-46a8-b16e-05d5ad50d6ee"
+            },
+            "vertices": [],
+            "data": {
+              "type": "tm.Flow",
+              "name": "SQL",
+              "description": "",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "protocol": "MySQL",
+              "isEncrypted": false,
+              "isPublicNetwork": false,
+              "isBidirectional": false
+            }
+          },
+          {
+            "id": "50bc2f6c-53de-4819-8b84-ca181259f7b3",
+            "shape": "flow",
+            "zIndex": 10,
+            "width": 200,
+            "height": 100,
+            "connector": "smooth",
+            "attrs": {
+              "line": {
+                "stroke": "#333333",
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "labels": [
+              "Schedule locks / dispatch"
+            ],
+            "source": {
+              "cell": "17142ac7-1e1f-417f-8ceb-65d296db5fe3"
+            },
+            "target": {
+              "cell": "4001b80c-f271-491b-9a5a-a1360ae53208"
+            },
+            "vertices": [],
+            "data": {
+              "type": "tm.Flow",
+              "name": "Schedule locks / dispatch",
+              "description": "",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "protocol": "RESP",
+              "isEncrypted": false,
+              "isPublicNetwork": false,
+              "isBidirectional": false
+            }
+          },
+          {
+            "id": "eb82c57a-8cf6-49b2-967c-a8e1e282d051",
+            "shape": "flow",
+            "zIndex": 10,
+            "width": 200,
+            "height": 100,
+            "connector": "smooth",
+            "attrs": {
+              "line": {
+                "stroke": "#333333",
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "labels": [
+              "File upload / read"
+            ],
+            "source": {
+              "cell": "98a14bce-f593-4346-afba-78823c5a64e7"
+            },
+            "target": {
+              "cell": "ce46c180-8dbe-4959-ab00-d2c8acb64b51"
+            },
+            "vertices": [],
+            "data": {
+              "type": "tm.Flow",
+              "name": "File upload / read",
+              "description": "",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "protocol": "HTTPS",
+              "isEncrypted": true,
+              "isPublicNetwork": true,
+              "isBidirectional": false
+            }
+          },
+          {
+            "id": "0e2def65-2744-48f4-8231-9698545a35bb",
+            "shape": "flow",
+            "zIndex": 10,
+            "width": 200,
+            "height": 100,
+            "connector": "smooth",
+            "attrs": {
+              "line": {
+                "stroke": "#333333",
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "labels": [
+              "convox deploy / run"
+            ],
+            "source": {
+              "cell": "2717e204-651e-42bf-a894-22c4a400dc73"
+            },
+            "target": {
+              "cell": "898db4aa-9d54-466a-b4a5-04b3508c5356"
+            },
+            "vertices": [],
+            "data": {
+              "type": "tm.Flow",
+              "name": "convox deploy / run",
+              "description": "",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "protocol": "HTTPS",
+              "isEncrypted": true,
+              "isPublicNetwork": true,
+              "isBidirectional": false
+            }
+          },
+          {
+            "id": "5a0d8232-3a43-421b-a7f5-8c5183a2b16b",
+            "shape": "flow",
+            "zIndex": 10,
+            "width": 200,
+            "height": 100,
+            "connector": "smooth",
+            "attrs": {
+              "line": {
+                "stroke": "#333333",
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "labels": [
+              "stdout/stderr"
+            ],
+            "source": {
+              "cell": "98a14bce-f593-4346-afba-78823c5a64e7"
+            },
+            "target": {
+              "cell": "9b73428c-4dfd-4bb1-9d10-1bc963de7b36"
+            },
+            "vertices": [],
+            "data": {
+              "type": "tm.Flow",
+              "name": "stdout/stderr",
+              "description": "",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "protocol": "stream",
+              "isEncrypted": false,
+              "isPublicNetwork": false,
+              "isBidirectional": false
+            }
+          },
+          {
+            "id": "357e144b-df67-4859-87e0-bfeb7de268f1",
+            "shape": "flow",
+            "zIndex": 10,
+            "width": 200,
+            "height": 100,
+            "connector": "smooth",
+            "attrs": {
+              "line": {
+                "stroke": "#333333",
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "labels": [
+              "stdout/stderr"
+            ],
+            "source": {
+              "cell": "efc2edf6-c677-40ce-8bc1-ba2f5025b6f8"
+            },
+            "target": {
+              "cell": "9b73428c-4dfd-4bb1-9d10-1bc963de7b36"
+            },
+            "vertices": [],
+            "data": {
+              "type": "tm.Flow",
+              "name": "stdout/stderr",
+              "description": "",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "protocol": "stream",
+              "isEncrypted": false,
+              "isPublicNetwork": false,
+              "isBidirectional": false
+            }
+          },
+          {
+            "id": "19de8486-1ff9-496e-9de4-aa4aab254862",
+            "shape": "flow",
+            "zIndex": 10,
+            "width": 200,
+            "height": 100,
+            "connector": "smooth",
+            "attrs": {
+              "line": {
+                "stroke": "#333333",
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "labels": [
+              "stdout/stderr"
+            ],
+            "source": {
+              "cell": "17142ac7-1e1f-417f-8ceb-65d296db5fe3"
+            },
+            "target": {
+              "cell": "9b73428c-4dfd-4bb1-9d10-1bc963de7b36"
+            },
+            "vertices": [],
+            "data": {
+              "type": "tm.Flow",
+              "name": "stdout/stderr",
+              "description": "",
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "threats": [],
+              "hasOpenThreats": false,
+              "protocol": "stream",
+              "isEncrypted": false,
+              "isPublicNetwork": false,
+              "isBidirectional": false
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
