@@ -123,6 +123,13 @@ return [
 ];
 ```
 
+Append a scheduled task to `$TMPDIR/routes/console.php`, used by the boot
+output checks (section R):
+
+```php
+Illuminate\Support\Facades\Schedule::command('inspire')->hourly();
+```
+
 Append a slow route to `$TMPDIR/routes/web.php`, used by the graceful-shutdown
 checks (section P):
 
@@ -516,6 +523,34 @@ which defaults to `true`.
 |---|-------|-----------|---------|----------|
 | O1 | Default command migrates | all 8 containers | `docker logs CONTAINER 2>&1` | Contains `running migrations` |
 | O2 | Disabled migrations are skipped | all 4 production images | `docker run --rm -e RUN_MIGRATIONS=false -e APP_ENV=testing -e APP_KEY=base64:dGVzdGtleWZvcnRlc3RpbmcxMjM0NTY3ODkwYWJjZGU= -e DB_CONNECTION=null -e LOG_CHANNEL=stderr -e CACHE_STORE=array lpr-test:ENGINE-production php artisan --version 2>&1` | Contains `Startup complete` and `Laravel Framework`; does **not** contain `running migrations` |
+
+---
+
+### R. Startup — Scheduler Command
+
+The app prints `php artisan about` at boot. The scheduler's `convox.yml`
+command prints `php artisan schedule:list` first, then `exec`s
+`schedule:work`. Run it from the production image with the runtime env vars
+from step 12, but `APP_ENV=production`, exactly as Convox passes it (split into
+arguments, no shell). `APP_ENV=testing` makes Laravel's `runningUnitTests()`
+true, which turns off every `trap()` signal handler: the scheduler then ignores
+SIGTERM and R4 fails for a reason production never has.
+
+```bash
+docker run -d --name lpr-test-boot-scheduler ENV_FLAGS -e APP_ENV=production -e RUN_MIGRATIONS=false lpr-test:ENGINE-production sh -c "php artisan schedule:list && exec php artisan schedule:work --whisper"
+sleep 10
+docker logs lpr-test-boot-scheduler > /tmp/lpr-boot-scheduler.log 2>&1
+docker exec lpr-test-boot-scheduler cat /proc/1/cmdline | tr '\0' ' '
+START=$(date +%s); docker stop -t 30 lpr-test-boot-scheduler; echo "stop took $(( $(date +%s) - START ))s"
+docker rm -f lpr-test-boot-scheduler
+```
+
+| # | Check | Applies to | Command | Expected |
+|---|-------|-----------|---------|----------|
+| R1 | App prints `about` | all 4 production containers | `docker logs CONTAINER 2>&1` | Contains `Laravel Version` |
+| R2 | Scheduler prints the schedule | all 4 production images | `cat /tmp/lpr-boot-scheduler.log` | Contains `inspire` |
+| R3 | `schedule:work` is PID 1 | all 4 production images | `cmdline` line above | Contains `schedule:work`; does **not** start with `sh` |
+| R4 | SIGTERM reaches the scheduler | all 4 production images | `stop took` line | Under `5` seconds. `30` means the signal was lost: `sh` is PID 1 (the `exec` is missing) or the container ran with `APP_ENV=testing` |
 
 ---
 

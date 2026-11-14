@@ -419,7 +419,7 @@ Don't use `runInBackground()`. A timer's `schedule:run` exits immediately and th
 scheduler:
   build:
     manifest: Dockerfile
-  command: php artisan schedule:work --whisper
+  command: sh -c "php artisan schedule:list && exec php artisan schedule:work --whisper"
   internal: true
   health:
     disable: true
@@ -438,7 +438,8 @@ scheduler:
 - No `singleton: true`. It stops the old Process before starting the new one, so a minute boundary falling in that gap is skipped for good — the scheduler has no catch-up. The default rolling update starts the new Process first, so both run briefly; `Schedule::alwaysOnOneServer()` (see [Application Safeguards](#application-safeguards)) makes that overlap harmless by letting only one of them run each due task. `scale.count: 1` keeps it at one Process at rest.
 - `--whisper` suppresses the "No scheduled commands are ready to run." line that `schedule:run` otherwise logs every single minute — most ticks have nothing due, and that line adds no value to a log aggregator.
 - `schedule:work` also accepts `--run-output-file=<path>`, which redirects `schedule:run`'s output to a file instead of stdout. **Don't use it here** — this setup keeps all process output on stdout/stderr so container logs stay the single source of truth (see `LOG_CHANNEL=stderr`); writing to a file inside an ephemeral container just makes that output unreachable.
-- Sized smaller than the `queue` service: it only ever runs short-lived `schedule:run` children, never a persistent job-processing loop.
+- The command prints `php artisan schedule:list` before starting, so the log shows which tasks this release scheduled and when each is next due. It prints each command's arguments too: pass secrets through config, not as task arguments. Convox splits `command` into arguments without a shell, hence the explicit `sh -c`; `exec` replaces the shell so `schedule:work` receives the stop signal itself.
+- Sized smaller than the `queue` service; see [Sizing → Scheduler](#scheduler-1).
 
 ### Option 2 — Timer running `schedule:run`
 
@@ -471,7 +472,7 @@ Not implemented in this repo — documented here as the natural next step if Opt
 
 ## Container Startup
 
-`scripts/start-container.sh` is the entrypoint for every image. It installs dependencies in local only, runs migrations when `RUN_MIGRATIONS=true`, warms the caches in production, then prints `php artisan about` (environment, cache state, drivers) before handing off to the image's `CMD`. The Dockerfiles default `RUN_MIGRATIONS=true`, preserving ordinary Docker and Sail behavior. The Convox example makes the policy explicit: `app` enables it; `queue` and `scheduler` set it to `false`.
+`scripts/start-container.sh` is the entrypoint for every image. It installs dependencies in local only, runs migrations when `RUN_MIGRATIONS=true`, warms the caches in production, then prints `php artisan about` (environment, cache state, drivers) before handing off to the image's `CMD`. The `scheduler` service also prints its task list, from its own command (see [Scheduler](#scheduler)). The Dockerfiles default `RUN_MIGRATIONS=true`, preserving ordinary Docker and Sail behavior. The Convox example makes the policy explicit: `app` enables it; `queue` and `scheduler` set it to `false`.
 
 ### Migrations
 

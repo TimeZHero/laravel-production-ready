@@ -99,7 +99,7 @@ services:
   scheduler:
     build:
       manifest: Dockerfile
-    command: php artisan schedule:work --whisper
+    command: sh -c "php artisan schedule:list && exec php artisan schedule:work --whisper"
     environment:
       - RUN_MIGRATIONS=false
     internal: true
