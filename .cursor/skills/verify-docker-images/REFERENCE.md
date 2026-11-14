@@ -382,6 +382,9 @@ For **nginx-based production** containers (fpm-production, roadrunner-production
 |---|-------|-----------|---------|----------|
 | F1 | opcache timestamps disabled | nginx-based production (3 containers) | `docker exec CONTAINER php -i \| grep opcache.validate_timestamps` | Value is `0` or `Off` |
 | F2 | xdebug not installed | nginx-based production (3 containers) | `docker exec CONTAINER php -m` | `xdebug` (case-insensitive) is **not** in the list |
+| F5 | PHP memory limit defaults to 128M | all 4 production images | `docker run --rm ENV_FLAGS lpr-test:ENGINE-production php -r 'echo ini_get("memory_limit");'` | Output ends with `128M` |
+| F6 | `PHP_MEMORY_LIMIT` overrides it | all 4 production images | Same, with `-e PHP_MEMORY_LIMIT=256M` | Output ends with `256M` |
+| F7 | PHP stops a worker before the pod limit does | all 4 production images | `docker run --name lpr-test-oom -m 320m ENV_FLAGS -e PHP_MEMORY_LIMIT=256M lpr-test:ENGINE-production php artisan tinker --execute='$chunks = []; while (true) { $chunks[] = str_repeat("x", 8 * 1024 * 1024); }'`, then `docker inspect -f '{{.State.OOMKilled}}' lpr-test-oom` and `docker rm lpr-test-oom` | Output contains `Allowed memory size of 268435456`; `OOMKilled` is `false`. The `queue` service's `scale.memory` (320) must stay above its `PHP_MEMORY_LIMIT` (256M) plus the PHP runtime |
 
 For **frankenphp-production** (1 container), use temp PHP scripts because the FrankenPHP php wrapper can interfere with `php -i` / `php -m`:
 

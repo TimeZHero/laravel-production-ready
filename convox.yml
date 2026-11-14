@@ -79,9 +79,10 @@ services:
   queue:
     build:
       manifest: Dockerfile
-    command: php artisan queue:work --tries=3 --timeout=60 --max-time=86400 --max-jobs=1000
+    command: php artisan queue:work --tries=3 --timeout=60 --max-time=86400 --max-jobs=1000 --memory=128
     environment:
       - RUN_MIGRATIONS=false
+      - PHP_MEMORY_LIMIT=256M
     internal: true
     health:
       disable: true
@@ -93,7 +94,7 @@ services:
     scale:
       count: 1
       cpu: 250
-      memory: 1024
+      memory: 320
 
   scheduler:
     build:

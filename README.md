@@ -27,6 +27,12 @@ Includes an ideal local environment by leveraging [Laravel Sail](https://github.
   - [Web Requests](#web-requests)
   - [App Shutdown](#app-shutdown)
   - [Queue Workers](#queue-workers)
+- [Sizing](#sizing)
+  - [How Convox Applies Limits](#how-convox-applies-limits)
+  - [What a PHP Process Costs](#what-a-php-process-costs)
+  - [Web (`app`)](#web-app)
+  - [Queue Workers](#queue-workers-1)
+  - [Scheduler](#scheduler-1)
 - [Things to Review](#things-to-review)
 - [Swoole](#swoole)
 - [FrankenPHP](#frankenphp)
@@ -302,7 +308,14 @@ The production image exposes the following environment variables:
 | `BRANCH`     | `BRANCH`     | The Git branch used to build the image                         |
 | `ENGINE`     | `ENGINE`     | The engine to use:`fpm`, `swoole`, `roadrunner`, `frankenphp`  |
 
-Pass them at build time (adjust `ENGINE` to match your chosen engine):
+Runtime settings, set per service in `convox.yml`:
+
+| Variable           | Default | Description                                                                                       |
+| ------------------ | ------- | ------------------------------------------------------------------------------------------------- |
+| `RUN_MIGRATIONS`   | `true`  | Run migrations at container start (see [Migrations](#migrations))                                 |
+| `PHP_MEMORY_LIMIT` | `128M`  | PHP `memory_limit` (see [Sizing](#sizing))                                                        |
+
+Pass the build args at build time (adjust `ENGINE` to match your chosen engine):
 
 ```bash
 # Gitlab CI
@@ -568,6 +581,10 @@ Like the app, the grace period is a ceiling: an idle worker exits immediately, a
 
 That restart is the useful part. `queue:work` keeps the framework loaded for the life of the process, and PHP does not reliably hand memory back to the OS. `--max-jobs` covers a busy worker. `--max-time` covers a quiet one that would otherwise live until the next deploy. A day is long enough that the boot gap is rare. Replicas from the same deploy share a start time, so they reach the limit together; the sample runs one, so that is a single gap of one container boot.
 
+**Memory** is sized in [Sizing → Queue Workers](#queue-workers-1).
+
+The worker logs why it stops (`Worker STOPPED Maximum run time exceeded`, `Memory limit exceeded`, …), so each restart explains itself in the container logs.
+
 `--timeout` is the other clock: an alarm around the current job. On Laravel 13 that alarm kills the worker (exit 1) after marking the job failed, and Convox restarts the container the same way. The 70-second grace period and the 90-second `retry_after` sit outside that 60 seconds, so a deploy can still finish the job and a second worker does not start it early.
 
 The scheduler keeps `grace: 45`: its tasks should dispatch jobs and return (see [Scheduler](#scheduler)), so it never has long work to finish.
@@ -606,6 +623,60 @@ class ImportUsers implements ShouldQueue, Interruptible
 ```
 
 A release counts as an attempt against `--tries`. `queue:restart` never calls `interrupted()` (it lets the current job finish), and `queue:work --once` installs no signal handlers at all; on Convox every deploy sends SIGTERM to the worker daemon, which is the case this covers.
+
+---
+
+## Sizing
+
+Developers assume a request or a job gets 128 MB, PHP's `memory_limit`. Sizing keeps that promise with the smallest pods that can hold it.
+
+### How Convox Applies Limits
+
+`scale.cpu` and `scale.memory` are what Kubernetes reserves on a node for each Process. `scale.limit.memory` defaults to `scale.memory`, so the reservation is also the hard ceiling. A process that crosses it is OOM-killed: SIGKILL, no PHP error in the logs, and whatever it was doing is lost. An oversized value is not safer either; it reserves node memory nothing uses.
+
+The rule for every service: **PHP must hit its own `memory_limit` before the pod hits `scale.memory`.** Then a runaway request or job fails with `Allowed memory size exhausted`, which says what happened, instead of a silent OOMKill.
+
+| Service     | `scale.cpu` | `scale.memory` | Count          | Sized for                                             |
+| ----------- | ----------- | -------------- | -------------- | ----------------------------------------------------- |
+| `app`       | 250         | 1024           | 1–30, autoscaled on CPU 70% / memory 90% | Concurrent requests (FPM children or Octane workers) |
+| `queue`     | 250         | 320            | 1              | One worker, one job at a time                         |
+| `scheduler` | 120         | 256            | 1              | `schedule:work` plus one `schedule:run` child         |
+
+### What a PHP Process Costs
+
+Measured on these images with a fresh Laravel app:
+
+- An idle `queue:work` uses about 55 MB of container memory.
+- A process holding about 240 MB of PHP heap uses 252 MiB of container memory on Alpine and 270 MiB on FrankenPHP (Debian). The difference, about 10–30 MB, is the PHP runtime (binary, extensions, libraries), which `memory_limit` does not count.
+
+So a pod needs the PHP limit of everything running in it, plus 64 MB per PHP process as runtime headroom. Real apps load more code than a fresh install; measure yours with `kubectl top pod` or `docker stats` under load and adjust.
+
+### Web (`app`)
+
+Memory scales with how many requests run at once, not with the limit of one:
+
+- **PHP-FPM** — worst case is `pm.max_children` × `memory_limit`, plus OPcache's shared memory (`opcache.memory_consumption`, 128 MB) and nginx. The stock `pm.max_children = 50` is a ceiling for a large server: 50 × 128 MB is far above a 1024 MB pod. Real requests rarely use their whole limit, so size from the measured average: `pm.max_children` ≈ (`scale.memory` − 128 − 64) ÷ average request memory. Too many children against 250 CPU units also queue on CPU, so autoscaling (more pods) is the better way to absorb load than more children per pod.
+- **Octane (RoadRunner, Swoole, FrankenPHP)** — each worker keeps the booted app in memory, so the pod needs workers × per-worker memory. Octane's default worker count follows the host's CPUs, not the pod's, so on a large node it starts far more workers than the pod can hold. Set the count explicitly with `--workers` through `OCTANE_OPTIONS` (see [Swoole](#swoole)).
+- **FrankenPHP** — `GOMEMLIMIT` should be about 90% of the pod's memory (`920MiB` for 1024). It sits in the shared `environment` block, so it matches the `app` service only; set it per service if another service runs the FrankenPHP image with a different size.
+
+### Queue Workers
+
+A job gets 128 MB, the same as a web request. Three settings in the `queue` service make that true, all derived from that one budget:
+
+| Setting            | Rule            | Value | Why                                                                                    |
+| ------------------ | --------------- | ----- | -------------------------------------------------------------------------------------- |
+| `--memory`         | budget          | 128   | The worker restarts between jobs once it holds more than this                          |
+| `PHP_MEMORY_LIMIT` | 2 × budget      | 256M  | A job starts below 128 MB, so it always has another 128 MB before PHP stops it          |
+| `scale.memory`     | 2 × budget + 64 | 320   | The PHP limit plus the runtime, so PHP stops a runaway job before the pod is OOM-killed |
+
+- **Why two limits.** `--memory` is checked after each job: past it, the worker exits cleanly (code 12) without starting the next one, and the container restarts. `memory_limit` is enforced during the job: past it, PHP aborts the job halfway, and the job is retried after `retry_after`. With both at 128, the first could never fire, so a leaking worker would always end the second way.
+- **Checked.** Section F7 of the verify skill fills a worker's 256M PHP limit inside a 320 MB container and expects PHP, not the kernel, to stop it.
+- **Changing the budget.** Edit the three values in the `queue` service together. For 512 MB jobs: `--memory=512`, `PHP_MEMORY_LIMIT=1024M`, `scale.memory: 1088`. No single variable can drive all three: PHP's ini has no arithmetic and Convox `scale` does not read environment variables.
+- **Only some jobs are heavy.** Don't raise every worker. Copy the `queue` service as `queue-heavy`, give it the larger budget and `--queue=heavy`, and send those jobs there with `->onQueue('heavy')`. Ordinary jobs keep the small pods.
+
+### Scheduler
+
+`schedule:work` stays small and starts one `schedule:run` child per minute under the default 128M limit. The child at its limit, the idle parent and two PHP runtimes come to roughly 220 MB, under 256. That only holds while tasks dispatch jobs instead of doing the work themselves (see [Scheduler](#scheduler)). A task that needs more memory belongs on the queue, not in a bigger scheduler.
 
 ---
 
@@ -689,7 +760,7 @@ The Caddy volumes below are **not** set by default, but they are needed in a sin
 ## TODO
 
 - **PIE stays out of the Dockerfiles** (on hold). [PIE 1.5](https://thephp.foundation/blog/2026/10/07/pie-1-5-released/) (October 2026) installs several third-party extensions in one command and publishes a build-time binary image (`ghcr.io/php/pie:bin`). The old PHP 8.5 compile gap is also gone: `phpredis` 6.3, `swoole/swoole`, igbinary, and xdebug all publish PIE packages for 8.5. PIE still only installs Packagist `php-ext` packages. Bundled extensions (`ctype`, `curl`, `gd`, `intl`, `mbstring`, `pdo_mysql`, `zip`, FPM, and the rest of the Laravel set) stay on Alpine `apk` or FrankenPHP's `install-php-extensions`. Handing redis, igbinary, swoole, and xdebug to PIE beside that leaves two installers for four extensions, and on Alpine it throws away the prebuilt packages. Revisit only when one installer covers the whole set. `install-php-extensions` has not switched over ([mlocati/docker-php-extension-installer#1125](https://github.com/mlocati/docker-php-extension-installer/issues/1125) is still open).
-- Stress test to find optimal/reference values in `convox.yml` (Kubernetes) and PHP-FPM/worker pool configurations.
+- Stress test to find optimal/reference values in `convox.yml` (Kubernetes) and PHP-FPM/worker pool configurations (with tests on local rack). In particular `pm.max_children = 50`: it is high on purpose, so a traffic spike makes Convox scale pods instead of cutting requests off. A lower cap would queue requests in the FPM backlog rather than reject them, while 50 children above what a 1024 MB pod can hold gets the whole pod OOM-killed before autoscaling reacts. Measure the peak memory of a typical request and check `pm.max_children` ≈ (`scale.memory` − 128 OPcache − ~64) ÷ that peak (see [Sizing → Web](#web-app)).
 
 ---
 
