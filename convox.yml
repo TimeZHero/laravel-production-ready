@@ -7,9 +7,6 @@ resources:
     type: redis
 
 environment:
-  # Go runtime (FrankenPHP) - set to ~90% of memory limit
-  - GOMEMLIMIT=920MiB
-
   - APP_NAME=MY_APP
   - APP_ENV=production
   - APP_DEBUG=false

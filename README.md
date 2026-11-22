@@ -810,7 +810,7 @@ Memory scales with how many requests run at once, not with the limit of one:
 
 - **PHP-FPM** — worst case is `pm.max_children` × `memory_limit`, plus OPcache's shared memory (`opcache.memory_consumption`, 128 MB) and nginx. The stock `pm.max_children = 50` is a ceiling for a large server: 50 × 128 MB is far above a 1024 MB pod. Real requests rarely use their whole limit, so size from the measured average: `pm.max_children` ≈ (`scale.memory` − 128 − 64) ÷ average request memory. Too many children against 250 CPU units also queue on CPU, so autoscaling (more pods) is the better way to absorb load than more children per pod.
 - **Octane (RoadRunner, Swoole, FrankenPHP)** — each worker keeps the booted app in memory, so the pod needs workers × per-worker memory. Octane's default worker count follows the host's CPUs, not the pod's, so on a large node it starts far more workers than the pod can hold. Set the count explicitly with `--workers` through `OCTANE_OPTIONS` (see [Swoole](#swoole)).
-- **FrankenPHP** — `GOMEMLIMIT` should be about 90% of the pod's memory (`920MiB` for 1024). It sits in the shared `environment` block, so it matches the `app` service only; set it per service if another service runs the FrankenPHP image with a different size.
+- **FrankenPHP** — `GOMEMLIMIT` needs no setting. Caddy's `run` command, which Octane starts, sets it to 90% of the container's memory limit, so it follows `scale.memory`. A `GOMEMLIMIT` you set yourself wins. `php artisan` commands run through `frankenphp php-cli` and get no limit, which is fine: PHP's own memory is not Go heap.
 
 ### Queue Workers
 
