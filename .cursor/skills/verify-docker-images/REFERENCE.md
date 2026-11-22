@@ -633,10 +633,27 @@ the tools that made them.
 Migrations are controlled by the explicit `RUN_MIGRATIONS` environment variable,
 which defaults to `true`.
 
+The built images carry the step 10 entrypoint, which discards migration output
+and failures, so these checks mount the repo's own script over it. With
+`DB_CONNECTION=null`, an attempted migration fails, and that failure must stop
+the boot before the command runs. Run them for each of the 4 production images,
+in bash (`$O_RUN` relies on word splitting, which zsh does not do).
+
+```bash
+REPO=/path/to/laravel-production-ready
+mkdir -p "$TMPDIR/o"
+# The script is 644 in git (the Dockerfiles add the exec bit), so mount an executable copy
+install -m 755 "$REPO/scripts/start-container.sh" "$TMPDIR/o/start-container.sh"
+O_RUN="docker run --rm \
+    -v $TMPDIR/o/start-container.sh:/usr/local/bin/start-container:ro \
+    -e APP_ENV=testing -e APP_KEY=base64:dGVzdGtleWZvcnRlc3RpbmcxMjM0NTY3ODkwYWJjZGU= \
+    -e DB_CONNECTION=null -e LOG_CHANNEL=stderr -e CACHE_STORE=array"
+```
+
 | # | Check | Applies to | Command | Expected |
 |---|-------|-----------|---------|----------|
-| O1 | Default command migrates | all 8 containers | `docker logs CONTAINER 2>&1` | Contains `running migrations` |
-| O2 | Disabled migrations are skipped | all 4 production images | `docker run --rm -e RUN_MIGRATIONS=false -e APP_ENV=testing -e APP_KEY=base64:dGVzdGtleWZvcnRlc3RpbmcxMjM0NTY3ODkwYWJjZGU= -e DB_CONNECTION=null -e LOG_CHANNEL=stderr -e CACHE_STORE=array lpr-test:ENGINE-production php artisan --version 2>&1` | Contains `Startup complete` and `Laravel Framework`; does **not** contain `running migrations` |
+| O1 | Migrations run by default | all 4 production images | `$O_RUN lpr-test:ENGINE-production php artisan --version 2>&1; echo "exit=$?"` | Contains `Undefined array key "driver"` (`DB_CONNECTION=null` reads as a real null, so Laravel gets the whole connections array); does **not** contain `Laravel Framework`; exit not `0` |
+| O2 | Disabled migrations are skipped | all 4 production images | `$O_RUN -e RUN_MIGRATIONS=false lpr-test:ENGINE-production php artisan --version 2>&1; echo "exit=$?"` | Contains `Laravel Framework`; does **not** contain `Undefined array key`; `exit=0` |
 
 ---
 
@@ -759,7 +776,7 @@ ASSET=$(docker exec CONTAINER sh -c 'ls /app/public/build/assets | head -1')
 | Q4 | Missing asset is not cacheable | nginx-based production (3 containers) | `curl -s -D - -o /dev/null http://127.0.0.1:PORT/build/assets/missing-0000.js` | Status `404`; no `immutable` in any `Cache-Control` header |
 | Q5 | Dotfiles still denied under assets | nginx-based production (3 containers) | `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:PORT/build/assets/.env` | `403` |
 | Q6 | Successful asset hits are not logged | nginx-based production (3 containers) | Request the asset (200), then again with `-H 'If-None-Match: <its ETag>'` (304); then `docker logs CONTAINER 2>&1 \| grep "GET /build/assets/$ASSET"` | No output |
-| Q7 | Failed asset requests are logged | nginx-based production (3 containers) | After Q4 and Q5: `docker logs CONTAINER 2>&1 \| grep -E 'GET /build/assets/(missing-0000.js\|\.env)'` | Two lines, with status `404` and `403` |
+| Q7 | Failed asset requests are logged | nginx-based production (3 containers) | After Q4 and Q5: `docker logs CONTAINER 2>&1 \| grep -E 'GET /build/assets/(missing-0000.js\|\.env)' \| grep -v '\[error\]'` (nginx's error log names the same request) | Two access-log lines, with status `404` and `403` |
 | Q8 | Traversal out of assets is logged | nginx-based production (3 containers) | `curl -s --path-as-is -o /dev/null http://127.0.0.1:PORT/build/assets/../manifest.json`, then `docker logs CONTAINER 2>&1 \| grep 'assets/../manifest.json'` | One line (nginx normalizes the URI to `/build/manifest.json`, outside the skipped path) |
 
 ---
