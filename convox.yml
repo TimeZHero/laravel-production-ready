@@ -54,6 +54,10 @@ x-shared:
       drop:
         - ALL
     seccompProfile: RuntimeDefault
+  # Roll a deploy back fast instead of waiting 50 minutes. See the README's "Deploy Failure Detection"
+  deployment: &deployment
+    progressDeadline: 300
+    crashRestartLimit: 1
   # The only writable paths. FrankenPHP also needs /config and /data
   volumeOptions: &volumeOptions
     - emptyDir:
@@ -78,14 +82,22 @@ services:
     resources: *resources
     securityContext: *securityContext
     volumeOptions: *volumeOptions
+    deployment: *deployment
+    # Holds off health and liveness while the entrypoint migrates: ~125s from container start, the boot-time migration limit
+    startupProbe:
+      path: /up
+      grace: 5
+      interval: 5
+      timeout: 4
+      failureThreshold: 24
     health:
-      grace: 30
+      grace: 5
       interval: 10
       path: /up
       timeout: 4
     liveness:
       path: /up
-      grace: 60
+      grace: 5
       interval: 10
       timeout: 4
       failureThreshold: 6
@@ -111,6 +123,7 @@ services:
     resources: *resources
     securityContext: *securityContext
     volumeOptions: *volumeOptions
+    deployment: *deployment
     health:
       disable: true
     termination:
@@ -128,6 +141,7 @@ services:
     resources: *resources
     securityContext: *securityContext
     volumeOptions: *volumeOptions
+    deployment: *deployment
     health:
       disable: true
     termination:

@@ -311,6 +311,19 @@
                   "new": false,
                   "number": 23,
                   "score": ""
+                },
+                {
+                  "id": "e43fac01-2f85-425a-b9c5-eb7530ef7ead",
+                  "title": "Broken release hangs or half-serves the app",
+                  "status": "Mitigated",
+                  "severity": "Medium",
+                  "type": "Denial of service",
+                  "description": "A release that crash-loops or never becomes healthy keeps the rollout open for 50 minutes; liveness killing a long migration leaves the schema half-migrated.",
+                  "mitigation": "convox.yml deployment progressDeadline 300 and crashRestartLimit 1 roll back in minutes; a stale migration lock (holder killed) blocks deploys that migrate up to its 1h TTL, accepted; boots with nothing pending skip the lock; startup probe keeps liveness off during boot; lock losers wait instead of restarting; schema changes stay backward compatible for the rollback.",
+                  "modelType": "STRIDE",
+                  "new": true,
+                  "number": 24,
+                  "score": ""
                 }
               ],
               "hasOpenThreats": false,

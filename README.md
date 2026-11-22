@@ -25,6 +25,7 @@ Includes an ideal local environment by leveraging [Laravel Sail](https://github.
 - [Application Safeguards](#application-safeguards)
 - [Scheduler](#scheduler)
 - [Container Startup](#container-startup)
+- [Deploy Failure Detection](#deploy-failure-detection)
 - [Timeouts & Shutdown](#timeouts--shutdown)
   - [Web Requests](#web-requests)
   - [App Shutdown](#app-shutdown)
@@ -642,6 +643,34 @@ While the flag is up, `queue:work` stops taking new jobs (a job already running 
 > Stock Laravel keeps cache on the `cache` Redis connection (`REDIS_CACHE_DB=1`) and locks on `default` (`REDIS_DB=0`), which limits the blast radius. ElastiCache with cluster mode enabled only has database `0` (Valkey 9 can enable more, but only if `cluster-databases` was set when the cluster was created). On that setup a `cache:clear` also takes sessions, queued jobs and locks.
 
 ---
+
+## Deploy Failure Detection
+
+Without help, a broken release on Convox hangs for 50 minutes before the rollout times out: Kubernetes restarts the crashing containers with growing delays and nothing gives up. `convox.yml` turns on Convox's failure detection (rack 3.25.5+) for every service, from the `x-shared` `deployment` anchor:
+
+```yaml
+deployment:
+  progressDeadline: 300
+  crashRestartLimit: 1
+```
+
+- **`crashRestartLimit: 1`** — Convox rolls back once a container of the new release restarts a second time. Kubernetes waits 10 seconds before the first restart and 20 before the second, so a release that crashes on boot (a failed migration, a missing env var, a fatal in a service provider) is rolled back about 30 seconds plus two boots in. The count is per pod (the highest container count in it), and only pods of the current rollout count. One restart is allowed because Kubernetes always restarts, and a single boot can fail for a reason that is not the release: the database or Redis unreachable for a moment, a node going away.
+- **`progressDeadline: 300`** — Convox rolls back when no new pod has become ready for five minutes. Its clock starts at pod creation, so it also covers waiting for a node and pulling the image. It catches what neither crashes nor reaches the startup probe: a pod that is never scheduled, an image that cannot be pulled. Crashes do not wait for it: `crashRestartLimit` rolls them back in about 30 seconds.
+- **`startupProbe`** on `app` — `/up` every 5 seconds for about 125 seconds from container start. Readiness and liveness only start once it passes, so liveness no longer kills a container in the middle of a migration. This is the boot-time migration limit: a boot that hangs (a migration stuck on a table lock, an app that never answers `/up`) is killed, restarted once, killed again, and rolled back by `crashRestartLimit` after about five minutes.
+
+`convox deploy` exits non-zero when Convox rolls back, so the pipeline fails with it; `convox deploy-debug -a <app>` shows why.
+
+What this requires of the app:
+
+- **Migrations finish in about a minute and a half.** Entrypoint, migration and the first healthy `/up` must fit in the startup probe's ~125 seconds, counted from container start. A longer migration is killed partway (and leaves a stale lock, see [Migrations](#migrations)), so run it with `convox run` before the deploy, or raise the probe's `failureThreshold` for that release.
+- **Waiting replicas do not restart.** The entrypoint waits for the migration lock instead of exiting (see [Migrations](#migrations)). An entrypoint that exits on a busy lock trips `crashRestartLimit: 1` on any migration longer than about 30 seconds.
+- **The schema stays compatible with the previous release.** A rollback after a successful migration runs the old code on the new schema. Migrations that only add are safe; the ones that are not take the maintenance window in [Migrations](#migrations).
+
+Caveats:
+
+- `progressDeadline` also counts time a pod waits for a node. A deploy that needs the cluster to add a node (the new pods start beside the old ones, `deployment.maximum: 200`) usually gets one in one to three minutes, plus the image pull. Five minutes leaves room for that; a rack that is slower to scale needs a higher value.
+- `queue:work` exits, and so restarts, on `--max-jobs` and `--max-time`. Two such recycles in one pod before the rollout ends would read as a crash; at 1,000 jobs per recycle that takes a very busy queue.
+- The rack parameters `deploy_progress_deadline` and `deploy_crash_restart_limit` set the same checks for every app on a rack. The values in `convox.yml` win.
 
 ## Timeouts & Shutdown
 
