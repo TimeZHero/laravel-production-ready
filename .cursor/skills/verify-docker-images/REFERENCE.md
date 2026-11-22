@@ -241,11 +241,17 @@ QUEUE_CONNECTION=sync
 
 ### 8. Create the packages directory
 
-```bash
-mkdir -p "$TMPDIR/packages"
-```
+Add one local path package, so the `dependencies` stage must find it under `packages/` (S8):
 
-The Dockerfile's `COPY` expects this directory to exist.
+```bash
+mkdir -p "$TMPDIR/packages/lpr-check/src"
+cat > "$TMPDIR/packages/lpr-check/composer.json" <<'JSON'
+{"name": "lpr/check", "autoload": {"psr-4": {"Lpr\\Check\\": "src/"}}}
+JSON
+echo '<?php namespace Lpr\Check; class Probe {}' > "$TMPDIR/packages/lpr-check/src/Probe.php"
+docker run --rm -v "$TMPDIR:/app" -w /app composer:latest \
+    sh -c "composer config repositories.lpr-check path packages/lpr-check && composer require --ignore-platform-reqs lpr/check:@dev --no-interaction"
+```
 
 ### 9. Install npm dependencies
 
@@ -627,6 +633,7 @@ the tools that made them.
 | S5 | Package manifest shipped | all 4 production containers | `docker exec CONTAINER test -f bootstrap/cache/packages.php` | Exit code 0 |
 | S6 | Output outside `public/build` shipped | all 4 production containers | `docker exec CONTAINER cat bootstrap/ssr/marker.txt` | `built` (written by the step 9 build script, like an SSR bundle) |
 | S7 | No `node_modules` | all 4 production containers | `docker exec CONTAINER test -e node_modules` | Non-zero exit code |
+| S8 | Local path package installed | all 4 production containers | `docker exec CONTAINER php -r 'require "vendor/autoload.php"; echo class_exists("Lpr\\Check\\Probe") ? "ok" : "missing";'` | `ok` (the build fails earlier if `packages/` is not copied as a folder) |
 
 ---
 
