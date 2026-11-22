@@ -77,7 +77,7 @@ COPY --link confs/supervisor.d/nginx.conf /etc/supervisor.d/nginx.conf
 # Configure PHP
 COPY --link confs/php.ini /etc/php${PHP_VERSION}/conf.d/app.ini
 # Entrypoint
-COPY --link --chmod=755 scripts/start-container.sh /usr/local/bin/start-container
+COPY --link --chmod=555 scripts/start-container.sh /usr/local/bin/start-container
 
 # Runtime configuration
 EXPOSE 8080

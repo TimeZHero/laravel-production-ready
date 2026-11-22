@@ -79,7 +79,7 @@ ENV OCTANE_PORT=8080
 # Configure PHP
 COPY --link confs/php.ini ${PHP_INI_DIR}/conf.d/app.ini
 # Entrypoint
-COPY --link --chmod=755 scripts/start-container.sh /usr/local/bin/start-container
+COPY --link --chmod=555 scripts/start-container.sh /usr/local/bin/start-container
 
 # Runtime configuration
 EXPOSE 8080
@@ -131,7 +131,7 @@ RUN --mount=type=cache,target=/tmp/npm-cache \
 FROM base AS frankenphp
 
 # https://frankenphp.dev/docs/known-issues/#composer-scripts-referencing-php
-COPY --link --chmod=755 scripts/php.frankenphp.sh /usr/local/bin/php
+COPY --link --chmod=555 scripts/php.frankenphp.sh /usr/local/bin/php
 ENV PHP_BINARY=/usr/local/bin/php
 
 # =============================================================================
@@ -193,7 +193,7 @@ COPY --link --from=composer:2 /usr/bin/composer /usr/bin/composer
 COPY --link confs/xdebug.ini ${PHP_INI_DIR}/conf.d/xdebug-config.ini
 
 # https://frankenphp.dev/docs/known-issues/#composer-scripts-referencing-php
-COPY --link --chmod=755 scripts/php.frankenphp.sh /usr/local/bin/php
+COPY --link --chmod=555 scripts/php.frankenphp.sh /usr/local/bin/php
 ENV PHP_BINARY=/usr/local/bin/php
 
 # Docker Desktop shows the bind-mounted /app as root-owned, which git refuses as dubious ownership
