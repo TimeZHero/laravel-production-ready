@@ -883,6 +883,7 @@ Issues of timeouts may appear especially on small machines due to extreme CPU sp
 3. **No Alpine** — Alpine Linux images can't be used because [musl libc is slower with PHP ZTS mode](https://frankenphp.dev/docs/performance/#dont-use-musl). This only affects FrankenPHP because it requires ZTS (thread-safe) PHP. The other engines (FPM, RoadRunner, Swoole) run NTS (non-thread-safe) PHP, where musl's threading overhead is irrelevant.
 4. **No supervisord** — Since FrankenPHP is exposed directly, there is no nginx and no process supervisor in the image. Development works exactly like the other engines minus nginx: `php artisan dev` is the container command and runs Octane plus the sidecars.
 5. **Node.js from the official image** — Debian 13 (trixie) apt pins Node at 20.x, but `@laravel/multiplex` (which runs `php artisan dev`) requires ≥ 22.13. The image copies Node 24 from `node:24-trixie-slim` instead of installing the apt package.
+6. **No nginx rules** — Octane's own Caddyfile serves the app, so what `confs/nginx/` adds on the other engines is missing: `X-Frame-Options` and `X-Content-Type-Options` (set them in a Laravel middleware), the deny rule for dotfiles in `public/`, `immutable` caching of `public/build/assets/`, and the access-log filter, so `/up` probes are logged too. A custom Caddyfile through Octane's `--caddyfile` option can add them; this repo doesn't ship one.
 
 ### Quirks
 
