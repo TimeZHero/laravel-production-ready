@@ -289,14 +289,13 @@ docker run --rm -v "$TMPDIR:/app" -w /app node:24-alpine \
 
 ### 10. Patch start-container.sh
 
-In `$TMPDIR/scripts/start-container.sh`, make these replacements so the container doesn't fail on missing DB or missing Filament (these tests run with `DB_CONNECTION=null`, so `migrate:status` fails and the unlocked branch hits an unreachable connection; the locked loop is patched too, in case a branch changes):
+In `$TMPDIR/scripts/start-container.sh`, make these replacements so the container doesn't fail on a missing DB (these tests run with `DB_CONNECTION=null`, so `migrate:status` fails and the unlocked branch hits an unreachable connection; the locked loop is patched too, in case a branch changes):
 
 | Original                                   | Replacement                                                       |
 | ------------------------------------------- | -------------------------------------------------------------------- |
 | `    php artisan migrate:status --pending=2 \|\| pending=$?` | `    php artisan migrate:status --pending=2 2>/dev/null \|\| pending=$?` |
 | `            until php artisan migrate --force --isolated=75; do` | `            until php artisan migrate --force --isolated=75 2>/dev/null \|\| true; do` |
 | `            php artisan migrate --force` (inside the `*)` branch) | `            php artisan migrate --force 2>/dev/null \|\| true` |
-| `php artisan filament:optimize`             | `php artisan filament:optimize 2>/dev/null \|\| true`                |
 
 ### 11. Build all 8 images
 
