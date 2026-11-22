@@ -406,7 +406,7 @@ An `emptyDir` belongs to one pod: it survives a container restart and is lost wh
 
 **What changes for the app:**
 
-- **Public files belong on S3.** `public/storage` is linked at build time, so `php artisan storage:link` is not needed (it fails on the read-only root). The `public` disk still works, but each pod has its own and loses it on restart.
+- **Public files belong on S3.** `public/storage` is linked at build time, so `php artisan storage:link` is not needed (it fails on the read-only root). In local development the entrypoint runs it on boot instead, since `public/` is your bind-mounted project. The `public` disk still works, but each pod has its own and loses it on restart.
 - **Run one-off commands with `--use-service-volume`.** `convox run` copies the service's `securityContext` but not its `emptyDir` volumes, so without the flag nothing is writable and artisan cannot boot. `convox exec` into a running process and Convox Timers need nothing.
 
   ```bash

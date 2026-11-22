@@ -11,6 +11,11 @@ if [ "${APP_ENV:-production}" = "local" ]; then
         composer install --no-interaction
     fi
 
+    # Production links it at build; here public/ is the bind-mounted project
+    if [ ! -L "public/storage" ]; then
+        php artisan storage:link
+    fi
+
     if [ ! -d "node_modules" ]; then
         npm install
     fi

@@ -541,6 +541,7 @@ For **frankenphp-development** (1 container):
 | J4 | App user writes storage | all 4 production containers | `docker exec CONTAINER sh -c 'touch storage/x bootstrap/cache/x && echo ok'` | `ok` |
 | J5 | Runs as the image's `nobody` | all 4 production containers | `docker exec CONTAINER id` | `uid=65534(nobody) gid=65534(nobody)`; FrankenPHP shows `gid=65534(nogroup)` |
 | J6 | Image scripts are read-only | all 8 containers | `docker exec CONTAINER stat -c '%a %u %n' /usr/local/bin/start-container` (FrankenPHP: add `/usr/local/bin/php`) | `555 0` on every line |
+| J7 | Public storage linked in development | all 4 development containers | `docker exec CONTAINER readlink public/storage` | `/app/storage/app/public` |
 
 ---
 
