@@ -5,13 +5,12 @@ set -eu
 mkdir -p storage/app/private storage/app/public storage/framework/cache/data \
     storage/framework/sessions storage/framework/testing storage/framework/views storage/logs
 
-# Development environment
 if [ "${APP_ENV:-production}" = "local" ]; then
     if [ ! -f "vendor/autoload.php" ]; then
         composer install --no-interaction
     fi
 
-    # Production links it at build; here public/ is the bind-mounted project
+    # Production links it at build
     if [ ! -L "public/storage" ]; then
         php artisan storage:link
     fi
@@ -31,11 +30,10 @@ if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
     php artisan migrate:status --pending=2 || pending=$?
     case "$pending" in
         0)
-            # Nothing to migrate: skip the lock, so a stale one cannot block scaling
+            # Skip the lock, so a stale one cannot block scaling
             ;;
         2)
-            # 75 only means another container holds the migration lock: wait here,
-            # because a restart would count toward Convox's crashRestartLimit
+            # 75: another container holds the lock. Wait: a restart counts toward crashRestartLimit
             until php artisan migrate --force --isolated=75; do
                 status=$?
                 [ "$status" -eq 75 ] || exit "$status"
@@ -43,13 +41,12 @@ if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
             done
             ;;
         *)
-            # No migrations table yet: nothing to lock against
+            # No migrations table: nothing to lock against
             php artisan migrate --force
             ;;
     esac
 fi
 
-# Production environment
 if [ "${APP_ENV:-production}" = "production" ]; then
     php artisan optimize --quiet
     # Uncomment if you use Filament (https://filamentphp.com)

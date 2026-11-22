@@ -14,7 +14,6 @@ environment:
   - APP_KEY
   - DB_CONNECTION
 
-  # AWS
   - AWS_ACCESS_KEY_ID
   - AWS_SECRET_ACCESS_KEY
   - AWS_BUCKET
@@ -22,21 +21,18 @@ environment:
   - AWS_DEFAULT_REGION=eu-west-1
   - AWS_USE_PATH_STYLE_ENDPOINT=true
 
-  # Drivers
   - CACHE_STORE
   - QUEUE_CONNECTION
   - LOG_CHANNEL=stderr
-  # Stock config/database.php reads this. Container env wins over .env.
   - REDIS_PERSISTENT=true
 
-  # Support for multiple server instances
   - APP_MAINTENANCE_DRIVER=cache
-  # Keeping this empty will default to cache store
+  # Empty, not omitted: falls back to CACHE_STORE
   - APP_MAINTENANCE_STORE=
 
   - COMPOSER_AUTH
 
-# Settings every service aliases. Convox ignores YAML merge keys (`<<:`), so each key is aliased on its own
+# Convox drops YAML merge keys (`<<:`), so services alias each key
 x-shared:
   resources: &resources
     - db
@@ -51,11 +47,9 @@ x-shared:
       drop:
         - ALL
     seccompProfile: RuntimeDefault
-  # Roll a deploy back fast instead of waiting 50 minutes. See the README's "Deploy Failure Detection"
   deployment: &deployment
     progressDeadline: 300
     crashRestartLimit: 1
-  # The only writable paths. FrankenPHP also needs /config and /data
   volumeOptions: &volumeOptions
     - emptyDir:
         id: tmp
@@ -80,7 +74,6 @@ services:
     securityContext: *securityContext
     volumeOptions: *volumeOptions
     deployment: *deployment
-    # Holds off health and liveness while the entrypoint migrates: ~125s from container start, the boot-time migration limit
     startupProbe:
       path: /up
       grace: 5
