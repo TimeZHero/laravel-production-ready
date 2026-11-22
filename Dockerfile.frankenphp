@@ -21,25 +21,17 @@ ARG USER=nobody
 FROM dunglas/frankenphp:${FRANKENPHP_VERSION} AS base
 
 ARG USER
-ARG WWWUSER=1000
+# The image's own nobody; compose builds development as sail with the host UID
+ARG WWWUSER=65534
 
 ENV USER=${USER}
 
 WORKDIR /app
 
-# Install additional system packages
+# Install PHP extensions
 #
 # - Laravel requirements: https://laravel.com/docs/master/deployment#server-requirements
 #
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Debian 13 pins Node at 20.19, but @laravel/multiplex (php artisan dev) needs >= 22.13
-COPY --from=node:24-trixie-slim /usr/local/ /usr/local/
-
-# Install PHP extensions
 RUN install-php-extensions \
     # Required by Laravel
     ctype \
@@ -70,17 +62,14 @@ RUN install-php-extensions \
     mysqli \
     pdo_mysql
 
-# - Install Composer
 # - Create user with UID matching host user (for file permission compatibility)
 # - Create group and user only if they don't already exist
 # - Remove caps
 # - Fix permissions
-RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/bin/ --filename=composer; \
-    getent group ${USER} || groupadd ${USER}; \
-    getent passwd ${USER} || useradd -u ${WWWUSER} -g ${USER} -m ${USER}; \
+RUN getent passwd ${USER} || { getent group ${USER} || groupadd ${USER}; useradd -u ${WWWUSER} -g ${USER} -m ${USER}; }; \
     setcap -r /usr/local/bin/frankenphp; \
     mkdir -p /home/${USER} && chown ${WWWUSER}:${WWWUSER} /home/${USER}; \
-    chown -R ${WWWUSER}:${WWWUSER} /app /config /data
+    chown -R ${WWWUSER}:${WWWUSER} /config /data
 
 ENV HOME=/home/${USER}
 ENV RUN_MIGRATIONS=true
@@ -109,11 +98,32 @@ FROM base AS dependencies
 
 ARG COMPOSER_AUTH
 
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+COPY --link --from=composer:2 /usr/bin/composer /usr/bin/composer
+
 COPY --link composer.* packages .
 
 RUN --mount=type=cache,target=/tmp/composer-cache \
     COMPOSER_CACHE_DIR=/tmp/composer-cache \
     composer install --optimize-autoloader --no-interaction --no-dev --no-scripts --prefer-dist
+
+# =============================================================================
+# Build layer
+# =============================================================================
+FROM dependencies AS build
+
+COPY --from=node:24-trixie-slim /usr/local/ /usr/local/
+
+COPY --link . .
+
+# Octane copies the worker into public/ at start unless it is already there
+RUN --mount=type=cache,target=/tmp/npm-cache \
+    npm ci --cache /tmp/npm-cache && \
+    npm run build && \
+    composer dump-autoload --optimize --classmap-authoritative && \
+    { [ -f public/frankenphp-worker.php ] || cp vendor/laravel/octane/src/Commands/stubs/frankenphp-worker.php public/; }
 
 # =============================================================================
 # FrankenPHP
@@ -140,19 +150,15 @@ ENV GIT_TAG=${GIT_TAG}
 ENV BRANCH=${BRANCH}
 ENV OCTANE_HTTPS=true
 
-# Copy pre-built vendor from dependencies
-COPY --link --chown=${WWWUSER}:${WWWUSER} --from=dependencies /app/vendor vendor
+COPY --link --from=dependencies /app/vendor vendor
+COPY --link --from=build --exclude=vendor --exclude=node_modules /app .
+COPY --link --from=build /app/vendor/composer vendor/composer
+COPY --link --from=build /app/vendor/autoload.php vendor/autoload.php
 
-# Copy application source
-COPY --link --chown=${WWWUSER}:${WWWUSER} . .
-
-# Finalize: build frontend, run composer scripts, cleanup
-RUN --mount=type=cache,target=/tmp/npm-cache \
-    npm ci --cache /tmp/npm-cache && \
-    npm run build && \
-    rm -rf node_modules && \
-    composer dump-autoload --optimize --classmap-authoritative && \
-    chown -R ${WWWUSER}:${WWWUSER} bootstrap/cache storage
+# Code stays root-owned; the app user writes only to storage/ and bootstrap/cache.
+# storage:link at build: the root filesystem is read-only at runtime
+RUN chown -R ${WWWUSER}:${WWWUSER} storage bootstrap/cache && \
+    ln -sfn ../storage/app/public public/storage
 
 # Switch to non-root user for runtime
 USER ${WWWUSER}
@@ -167,15 +173,21 @@ ARG WWWUSER
 
 ENV OPCACHE_VALIDATE_TIMESTAMPS=1
 ENV OCTANE_HTTPS=false
+# Composer restarts PHP without Xdebug through `-n -c`, which the frankenphp wrapper can't pass
+ENV COMPOSER_ALLOW_XDEBUG=1
 
 # Install dev-only packages and PHP extensions
 # install-php-extensions needs the real php binary (not the FrankenPHP wrapper),
 # so this stage inherits from base (where php is still the real binary).
 # The wrapper is applied afterwards via COPY.
-RUN apt-get update && apt-get install -y --no-install-recommends bash \
+RUN apt-get update && apt-get install -y --no-install-recommends bash git \
     && install-php-extensions xdebug \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Debian 13 pins Node at 20.19, but @laravel/multiplex (php artisan dev) needs >= 22.13
+COPY --from=node:24-trixie-slim /usr/local/ /usr/local/
+COPY --link --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 # Enable xdebug
 COPY --link confs/xdebug.ini ${PHP_INI_DIR}/conf.d/xdebug-config.ini

@@ -141,6 +141,88 @@ Route::get('/slow', function () {
 });
 ```
 
+Append the feature routes used by the hardened-runtime checks (section T). Each
+one writes where a real app writes:
+
+```php
+Route::prefix('check')->group(function () {
+    Route::get('/view', fn () => view('check'));
+    Route::get('/session', function () {
+        session(['visits' => session('visits', 0) + 1]);
+
+        return (string) session('visits');
+    });
+    Route::get('/cache', function () {
+        Illuminate\Support\Facades\Cache::store('file')->put('check', 'cache-ok', 60);
+
+        return Illuminate\Support\Facades\Cache::store('file')->get('check');
+    });
+    Route::get('/local-disk', function () {
+        Illuminate\Support\Facades\Storage::disk('local')->put('check.txt', 'local-ok');
+
+        return Illuminate\Support\Facades\Storage::disk('local')->get('check.txt');
+    });
+    Route::get('/public-disk', function () {
+        Illuminate\Support\Facades\Storage::disk('public')->put('check.txt', 'public-ok');
+
+        return Illuminate\Support\Facades\Storage::disk('public')->get('check.txt');
+    });
+    Route::post('/upload', fn (Illuminate\Http\Request $request) => $request->file('file')->store('uploads') ? 'upload-ok' : 'upload-failed')
+        ->withoutMiddleware(Illuminate\Foundation\Http\Middleware\PreventRequestForgery::class);
+    Route::get('/log', function () {
+        Illuminate\Support\Facades\Log::channel('single')->info('check-log-line');
+
+        return str_contains(file_get_contents(storage_path('logs/laravel.log')), 'check-log-line') ? 'log-ok' : 'log-missing';
+    });
+    Route::get('/tmp', fn () => file_put_contents(tempnam(sys_get_temp_dir(), 'check'), 'x') ? 'tmp-ok' : 'tmp-failed');
+    Route::get('/mail', function () {
+        Illuminate\Support\Facades\Mail::raw('check', fn ($message) => $message->to('check@example.com'));
+
+        return 'mail-ok';
+    });
+    Route::get('/queue', function () {
+        App\Jobs\CheckJob::dispatch();
+
+        return 'queued';
+    });
+});
+```
+
+Create `$TMPDIR/resources/views/check.blade.php` (compiled on first render):
+
+```blade
+<x-check-badge label="view-ok" />
+```
+
+Create `$TMPDIR/resources/views/components/check-badge.blade.php`:
+
+```blade
+@props(['label'])
+<span>{{ $label }}</span>
+```
+
+Create `$TMPDIR/app/Jobs/CheckJob.php`:
+
+```php
+<?php
+
+namespace App\Jobs;
+
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\Storage;
+
+class CheckJob implements ShouldQueue
+{
+    use Queueable;
+
+    public function handle(): void
+    {
+        Storage::disk('local')->put('job.txt', 'job-ok');
+    }
+}
+```
+
 ### 7. Create the .env file
 
 Write to `$TMPDIR/.env`:
@@ -190,6 +272,14 @@ lpr-test-frankenphp-development`). Reinstall with `node:24-alpine` afterwards
 if further checks on the nginx-based dev containers are needed.
 
 `chokidar` is needed for Octane's `--watch` flag in development.
+
+Make the build also write outside `public/build`, the way an Inertia SSR
+bundle does, so S6 can check that every build output reaches production:
+
+```bash
+docker run --rm -v "$TMPDIR:/app" -w /app node:24-alpine \
+    npm pkg set scripts.build="vite build && mkdir -p bootstrap/ssr && echo built > bootstrap/ssr/marker.txt"
+```
 
 ### 10. Patch start-container.sh
 
@@ -425,6 +515,7 @@ For **frankenphp-development** (1 container):
 | # | Check | Applies to | Command | Expected |
 |---|-------|-----------|---------|----------|
 | H1 | OCTANE_HTTPS=true | roadrunner-production, swoole-production, frankenphp-production (3 containers) | `docker exec CONTAINER env \| grep OCTANE_HTTPS` | `OCTANE_HTTPS=true` |
+| H2 | RoadRunner config flag set by its stage only | roadrunner-production, swoole-production | `docker exec CONTAINER sh -c 'ps -o args \| grep [o]ctane:start'` | roadrunner: contains `--rr-config=.rr.yaml`; swoole: does not |
 
 ---
 
@@ -444,6 +535,10 @@ For **frankenphp-development** (1 container):
 | # | Check | Applies to | Command | Expected |
 |---|-------|-----------|---------|----------|
 | J1 | Non-root user | all 8 containers | `docker exec CONTAINER id` (without specifying a user, runs as the container's default) | Output does **not** contain `uid=0` |
+| J2 | Code is root-owned | all 4 production containers | `docker exec CONTAINER stat -c '%u %n' /app /app/app /app/vendor /app/public/build /app/storage /app/bootstrap/cache` | `0` for the first four; `65534` for `storage` and `bootstrap/cache` |
+| J3 | App user cannot write code | all 4 production containers | `docker exec CONTAINER sh -c 'touch /app/x; touch /app/public/x; touch /app/vendor/x' 2>&1` | Three `Permission denied` |
+| J4 | App user writes storage | all 4 production containers | `docker exec CONTAINER sh -c 'touch storage/x bootstrap/cache/x && echo ok'` | `ok` |
+| J5 | Runs as the image's `nobody` | all 4 production containers | `docker exec CONTAINER id` | `uid=65534(nobody) gid=65534(nobody)`; FrankenPHP shows `gid=65534(nogroup)` |
 
 ---
 
@@ -514,6 +609,24 @@ docker exec CONTAINER sh -c 'for f in /proc/[0-9]*/cmdline; do tr "\0" " " < "$f
 
 ---
 
+### S. Build Tools — Development Only
+
+Git, Node/npm and Composer are build and development tools. Production images
+get the built assets and the optimized autoloader from the `build` stage, not
+the tools that made them.
+
+| # | Check | Applies to | Command | Expected |
+|---|-------|-----------|---------|----------|
+| S1 | No build tools | all 4 production containers | `docker exec CONTAINER sh -c 'for tool in git node npm composer; do command -v $tool >/dev/null && echo "present: $tool"; done; true'` | Empty output |
+| S2 | Build tools present | all 4 development containers | `docker exec CONTAINER sh -c 'git --version && npm --version && composer --version'` | Exit code 0 |
+| S3 | Built assets shipped | all 4 production containers | `docker exec CONTAINER sh -c 'test -f public/build/manifest.json && echo ok'` | `ok` |
+| S4 | Optimized autoloader shipped | all 4 production containers | `docker exec CONTAINER grep -c "setClassMapAuthoritative(true)" vendor/composer/autoload_real.php` | `1` or more |
+| S5 | Package manifest shipped | all 4 production containers | `docker exec CONTAINER test -f bootstrap/cache/packages.php` | Exit code 0 |
+| S6 | Output outside `public/build` shipped | all 4 production containers | `docker exec CONTAINER cat bootstrap/ssr/marker.txt` | `built` (written by the step 9 build script, like an SSR bundle) |
+| S7 | No `node_modules` | all 4 production containers | `docker exec CONTAINER test -e node_modules` | Non-zero exit code |
+
+---
+
 ### O. Startup — Migration Policy
 
 Migrations are controlled by the explicit `RUN_MIGRATIONS` environment variable,
@@ -577,6 +690,118 @@ ASSET=$(docker exec CONTAINER sh -c 'ls /app/public/build/assets | head -1')
 | Q6 | Successful asset hits are not logged | nginx-based production (3 containers) | Request the asset (200), then again with `-H 'If-None-Match: <its ETag>'` (304); then `docker logs CONTAINER 2>&1 \| grep "GET /build/assets/$ASSET"` | No output |
 | Q7 | Failed asset requests are logged | nginx-based production (3 containers) | After Q4 and Q5: `docker logs CONTAINER 2>&1 \| grep -E 'GET /build/assets/(missing-0000.js\|\.env)'` | Two lines, with status `404` and `403` |
 | Q8 | Traversal out of assets is logged | nginx-based production (3 containers) | `curl -s --path-as-is -o /dev/null http://127.0.0.1:PORT/build/assets/../manifest.json`, then `docker logs CONTAINER 2>&1 \| grep 'assets/../manifest.json'` | One line (nginx normalizes the URI to `/build/manifest.json`, outside the skipped path) |
+
+---
+
+### T. Hardened Runtime — Read-Only Root
+
+Runs each production image the way the hardened `convox.yml` runs it: read-only
+root, `nobody` (65534), no capabilities, no privilege escalation, and writable mounts
+only where the `emptyDir` volumes go. Docker's `--tmpfs` stands in for
+`emptyDir` (`exec` because `emptyDir` is not `noexec`). The app runs in
+`production` with real drivers so every write path is exercised.
+
+```bash
+HARDEN="--read-only --user 65534:65534 --cap-drop ALL --security-opt no-new-privileges \
+  --tmpfs /tmp:rw,exec,mode=1777 --tmpfs /app/storage:rw,exec,mode=1777 \
+  --tmpfs /app/bootstrap/cache:rw,exec,mode=1777 --tmpfs /home/nobody:rw,exec,mode=1777"
+# frankenphp only: Caddy's config and data
+HARDEN_FRANKENPHP="--tmpfs /config:rw,exec,mode=1777 --tmpfs /data:rw,exec,mode=1777"
+APPENV="-e APP_NAME=LaravelTest -e APP_ENV=production -e APP_DEBUG=false \
+  -e APP_KEY=base64:dGVzdGtleWZvcnRlc3RpbmcxMjM0NTY3ODkwYWJjZGU= \
+  --network lpr-test-net -e DB_CONNECTION=mariadb -e DB_HOST=lpr-test-db \
+  -e DB_DATABASE=laravel -e DB_USERNAME=laravel -e DB_PASSWORD=laravel \
+  -e SESSION_DRIVER=file -e CACHE_STORE=file -e QUEUE_CONNECTION=database \
+  -e LOG_CHANNEL=stderr -e MAIL_MAILER=log"
+# The images ship pdo_mysql only, like production, so the checks use MariaDB
+docker network create lpr-test-net
+docker run -d --name lpr-test-db --network lpr-test-net -e MARIADB_DATABASE=laravel \
+  -e MARIADB_USER=laravel -e MARIADB_PASSWORD=laravel -e MARIADB_ROOT_PASSWORD=root mariadb:11
+docker run -d --name lpr-test-ENGINE-hardened -p 8080 $HARDEN [$HARDEN_FRANKENPHP] $APPENV lpr-test:ENGINE-production
+```
+
+Remove `lpr-test-db` and `lpr-test-net` in the cleanup step.
+
+Wait for `healthy` as in step 13. `URL` is the mapped port; `C` the container.
+
+| # | Check | Command | Expected |
+|---|-------|---------|----------|
+| T1 | Boots healthy | step 13 poll | `healthy` |
+| T2 | No write errors at boot | `docker logs C 2>&1 \| grep -Ei 'read-only file system\|permission denied'` | No output |
+| T3 | Config cached at boot | `docker logs C 2>&1 \| grep -E 'Config +\.+ +CACHED'` | One line |
+| T4 | Blade view and component compile | `curl -s URL/check/view` | Contains `view-ok` |
+| T5 | File sessions | `curl -s -c jar -b jar URL/check/session` twice | `1`, then `2` |
+| T6 | File cache | `curl -s URL/check/cache` | `cache-ok` |
+| T7 | Local disk | `curl -s URL/check/local-disk` | `local-ok` |
+| T8 | Public disk | `curl -s URL/check/public-disk` | `public-ok` |
+| T9 | Multipart upload | `curl -s -F file=@/etc/hosts URL/check/upload` | `upload-ok` |
+| T10 | File log channel | `curl -s URL/check/log` | `log-ok` |
+| T11 | System temp dir | `curl -s URL/check/tmp` | `tmp-ok` |
+| T12 | Mail (log mailer) | `curl -s URL/check/mail` | `mail-ok` |
+| T13 | Queued job | `curl -s URL/check/queue`, then `docker exec C php artisan queue:work --once`, then `docker exec C cat storage/app/private/job.txt` | `queued`, exit 0, `job-ok` |
+| T14 | Scheduled task | `docker exec C php artisan schedule:test --name=inspire` | Exit 0 |
+| T15 | Tinker, one-shot | `docker exec C php artisan tinker --execute="echo 'tinker-ok';" 2>&1` | Contains `tinker-ok`; no `read-only` or `not writable` |
+| T16 | Tinker, interactive session | `echo "echo 'tinker-ok';" \| docker exec -i C php artisan tinker 2>&1` | Same as T15. FrankenPHP fails with `cli_set_process_title()`, with or without hardening (README Quirks): record, don't fail |
+| T17 | Maintenance mode | `docker exec C php artisan down`, `curl` `/` , `docker exec C php artisan up`, `curl` `/` | `503`, then `200` |
+| T18 | Rebuild caches at runtime | `docker exec C sh -c 'php artisan optimize:clear && php artisan optimize'` | Exit 0 |
+| T19 | Everyday artisan | `docker exec C sh -c 'php artisan route:list && php artisan migrate:status && php artisan view:cache && php artisan event:cache'` | Exit 0 |
+| T20 | Octane control | octane engines: `docker exec C php artisan octane:status` and `php artisan octane:reload` | `running`; exit 0 |
+| T21 | No write errors after T4–T20 | Same as T2 | No output |
+| T22 | Public disk served through `public/storage` | `curl -s URL/storage/check.txt` (written by T8) | `public-ok` |
+| T23 | App options don't drop the RoadRunner flag | roadrunner only: rerun the hardened container with `-e OCTANE_OPTIONS=--workers=2`, then T1 and T2 | `healthy`; no output |
+
+The image ships the `public/storage` link, so `php artisan storage:link` is not
+needed (it fails on the read-only root). The `public` disk is per pod and lost on
+restart; production stores public files on S3, see the README.
+
+---
+
+### U. Convox Local Rack (optional)
+
+Section T approximates Kubernetes with Docker flags. To check the real thing,
+deploy the scaffolded app to a Convox local rack. Run it with nothing else
+building: a starved minikube node goes `NotReady` and fails unrelated checks.
+
+```bash
+minikube start --driver=docker --kubernetes-version=v1.35.0 --cpus=6 --memory=8g \
+  --insecure-registry=registry.lpr.macdev.convox.cloud
+minikube addons enable ingress && minikube addons enable ingress-dns
+convox rack install local lpr -v <latest 3.25.x> os=mac
+```
+
+- **Reaching the rack:** `*.macdev.convox.cloud` resolves to `127.0.0.1`, and
+  port 443 is usually taken by the local caddy-docker-proxy. Forward the ingress
+  instead, `kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 9443:443`,
+  and point the CLI at it with `RACK_URL` (the URL from `terraform output -raw api`
+  in `~/Library/Preferences/convox/racks/lpr`, with `:9443` after the host).
+  `RACK_URL` also keeps every command off any organization rack the CLI is
+  logged into.
+- **After `minikube stop`/`start`:** deploys roll back with
+  `failed calling webhook "validate.nginx.ingress.kubernetes.io"` (the admission
+  webhook's certificate no longer verifies). On the throwaway cluster:
+  `kubectl delete validatingwebhookconfiguration ingress-nginx-admission`.
+- **The app:** a copy of the scaffold with this repo's `convox.yml`, minus
+  `domain:`. Set `APP_KEY`, `DB_CONNECTION=mariadb`, `CACHE_STORE=redis`,
+  `QUEUE_CONNECTION=redis` and dummy values for the other required variables.
+  Deploy each engine with `convox deploy --build-args ENGINE=<engine>`;
+  FrankenPHP needs `manifest: Dockerfile.frankenphp` and the `/config` and
+  `/data` `emptyDir`s.
+
+Check against `https://app.<app>.lpr.macdev.convox.cloud:9443` (`curl -k --resolve`)
+and with `kubectl exec`:
+
+| # | Check | Expected |
+|---|-------|----------|
+| U1 | Pods of `app`, `queue`, `scheduler` | Running; `securityContext` and the `emptyDir` mounts present in the pod spec |
+| U2 | `touch /app/public/x` in each service | Fails (read-only) |
+| U3 | The T4–T13 routes, T22, the queue job picked up by the `queue` service | Same as section T |
+| U4 | Tinker via `kubectl exec`, one-shot and interactive | `tinker-ok` (FrankenPHP: interactive fails, known) |
+| U5 | `convox run app --use-service-volume php artisan tinker` (with a TTY) and `... php artisan about` | Works |
+| U6 | `convox run app php artisan --version` without the flag | Fails: `convox run` drops `volumeOptions`, so nothing is writable |
+| U7 | `convox exec <pid> php artisan tinker --execute=...` | `tinker-ok` |
+| U8 | A Timer on the `scheduler` service | Pod succeeds; it has the `emptyDir` mounts |
+| U9 | `down`/`up`, `optimize:clear && optimize`, `octane:status`/`octane:reload` | `503`/`200`, exit 0, `running` |
+| U10 | Logs of all services | No `Read-only file system` or `Permission denied` |
 
 ---
 

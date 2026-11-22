@@ -16,7 +16,6 @@ environment:
   - APP_URL=https://${APP_DOMAIN}
   - APP_KEY
   - DB_CONNECTION
-  - DB_URL
 
   # AWS
   - AWS_ACCESS_KEY_ID
@@ -40,13 +39,45 @@ environment:
 
   - COMPOSER_AUTH
 
+# Settings every service aliases. Convox ignores YAML merge keys (`<<:`), so each key is aliased on its own
+x-shared:
+  resources: &resources
+    - db
+    - redis
+  securityContext: &securityContext
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile: RuntimeDefault
+  # The only writable paths. FrankenPHP also needs /config and /data
+  volumeOptions: &volumeOptions
+    - emptyDir:
+        id: tmp
+        mountPath: /tmp
+    - emptyDir:
+        id: storage
+        mountPath: /app/storage
+    - emptyDir:
+        id: bootstrap-cache
+        mountPath: /app/bootstrap/cache
+    - emptyDir:
+        id: home
+        mountPath: /home/nobody
+
 services:
   app:
     domain: ${APP_DOMAIN}
-    build:
-      manifest: Dockerfile
+    port: 8080
     environment:
       - RUN_MIGRATIONS=true
+    resources: *resources
+    securityContext: *securityContext
+    volumeOptions: *volumeOptions
     health:
       grace: 30
       interval: 10
@@ -58,16 +89,11 @@ services:
       interval: 10
       timeout: 4
       failureThreshold: 6
-    internal: false
-    port: 8080
     lifecycle:
       preStop: "sleep 5"
     termination:
       grace: 75
     timeout: 60
-    resources:
-      - db
-      - redis
     scale:
       count: 1-30
       targets:
@@ -77,39 +103,35 @@ services:
       memory: 1024
 
   queue:
-    build:
-      manifest: Dockerfile
     command: php artisan queue:work --tries=3 --timeout=60 --max-time=86400 --max-jobs=1000 --memory=128
+    internal: true
     environment:
       - RUN_MIGRATIONS=false
       - PHP_MEMORY_LIMIT=256M
-    internal: true
+    resources: *resources
+    securityContext: *securityContext
+    volumeOptions: *volumeOptions
     health:
       disable: true
     termination:
       grace: 70
-    resources:
-      - db
-      - redis
     scale:
       count: 1
       cpu: 250
       memory: 320
 
   scheduler:
-    build:
-      manifest: Dockerfile
     command: sh -c "php artisan schedule:list && exec php artisan schedule:work --whisper"
+    internal: true
     environment:
       - RUN_MIGRATIONS=false
-    internal: true
+    resources: *resources
+    securityContext: *securityContext
+    volumeOptions: *volumeOptions
     health:
       disable: true
     termination:
       grace: 45
-    resources:
-      - db
-      - redis
     scale:
       count: 1
       cpu: 120

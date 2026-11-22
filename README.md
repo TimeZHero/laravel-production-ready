@@ -19,6 +19,8 @@ Includes an ideal local environment by leveraging [Laravel Sail](https://github.
   - [Compose & Convox](#compose--convox)
   - [Redis](#redis)
 - [Environment Variables](#environment-variables)
+- [AWS Credentials (Pod Identity)](#aws-credentials-pod-identity)
+- [Security Context](#security-context)
 - [Trusted Proxies](#trusted-proxies)
 - [Application Safeguards](#application-safeguards)
 - [Scheduler](#scheduler)
@@ -331,6 +333,92 @@ Copy [`stubs/config/deployment.php`](stubs/config/deployment.php) to `config/dep
 
 ---
 
+## AWS Credentials (Pod Identity)
+
+`convox.yml` passes `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` to every service: long-lived keys shared by all of them. On an AWS rack, [EKS Pod Identity](https://docs.convox.com/reference/primitives/app/service) gives each service its own IAM role with short-lived credentials instead.
+
+1. **Enable it on the rack**, once per rack. It installs the AWS agent that hands credentials to pods. EKS only, default `false`:
+
+   ```bash
+   convox rack params set pod_identity_agent_enable=true -r <rack>
+   ```
+
+2. **Create an IAM policy** that allows only your bucket, once per environment, outside Convox (Terraform or the AWS console). Convox creates the role, but not the policy.
+
+3. **Attach it to the services that use S3**, usually `app` and `queue`. Timers inherit their service's role.
+
+   ```yaml
+   services:
+     app:
+       accessControl:
+         awsPodIdentity:
+           policyArns:
+             - ${S3_POLICY_ARN}
+   ```
+
+   An ARN names a policy; it is not a secret. `${S3_POLICY_ARN}` comes from the app environment (`convox env set`), so one `convox.yml` serves every environment. Convox resolves `${…}` at release time, but its docs don't confirm that for `accessControl`: check it on the first deploy, or write the ARN literally.
+
+4. **Make the keys optional** with an empty default, then leave them unset where Pod Identity is on:
+
+   ```yaml
+   environment:
+     - AWS_ACCESS_KEY_ID=
+     - AWS_SECRET_ACCESS_KEY=
+   ```
+
+   Laravel passes `key`/`secret` to the S3 client only when both are non-empty. Otherwise the AWS SDK's default chain picks up the pod's credentials. No app change, as long as `aws/aws-sdk-php` is 3.289.0 or newer.
+
+What to know:
+
+- **Other racks ignore `accessControl`.** Local racks and non-AWS clouds skip the block, so set the keys there. Locally, compose keeps using keys (MinIO, RustFS).
+- **The rack parameter is not checked at deploy.** With `pod_identity_agent_enable=false`, Convox still creates the role and links it, the deploy succeeds, and S3 calls fail at runtime for lack of credentials.
+- **One role per service.** A service with no S3 access, such as a scheduler whose tasks don't touch files, gets no `accessControl` block.
+
+---
+
+## Security Context
+
+Every service in `convox.yml` runs with a hardened `securityContext`. It is declared once under `x-shared` and aliased by every service. Convox ignores YAML merge keys (`<<:`): a service merged that way silently loses these settings, so alias each key.
+
+| Setting | What it stops |
+| --- | --- |
+| `readOnlyRootFilesystem: true` | Code execution in the app cannot change the app: no edited `vendor/`, no script injected into `public/build`, no dropped binaries |
+| `runAsNonRoot: true`, `runAsUser`/`runAsGroup: 65534` (`nobody`) | Kubernetes refuses to start the pod if the image ever runs as root, e.g. after a Dockerfile regression |
+| `allowPrivilegeEscalation: false` | setuid and file-capability binaries cannot raise privileges |
+| `capabilities.drop: [ALL]` | A process that still becomes root inside the container gets none of root's powers |
+| `seccompProfile: RuntimeDefault` | Blocks kernel calls a web app never makes (`mount`, `unshare`, `bpf`, …), common in container escapes. Docker applies it by default; Kubernetes does not |
+
+**Writable paths.** With a read-only root, only the `emptyDir` volumes can be written:
+
+| Path | Why |
+| --- | --- |
+| `/tmp` | Uploads, `sys_get_temp_dir()`, the php-fpm socket, nginx and supervisord runtime files |
+| `/app/storage` | Logs, compiled views, file cache and sessions, local disks, Octane state |
+| `/app/bootstrap/cache` | `optimize` at container start |
+| `/home/nobody` (`$HOME`) | Tinker's config and history. Without it Tinker stops with `Writing to directory … is not allowed` |
+
+FrankenPHP also needs `/config` and `/data` (Caddy), as two more `emptyDir` entries.
+
+**Ownership.** The production image keeps the code root-owned. The app user owns only `storage/` and `bootstrap/cache`. Where the root filesystem is writable (a plain `docker run`, another orchestrator), the app still cannot rewrite its own code.
+
+An `emptyDir` belongs to one pod: it survives a container restart and is lost when the pod is replaced. It is disk, not memory, so it does not count against `scale.memory`.
+
+**What changes for the app:**
+
+- **Public files belong on S3.** `public/storage` is linked at build time, so `php artisan storage:link` is not needed (it fails on the read-only root). The `public` disk still works, but each pod has its own and loses it on restart.
+- **Run one-off commands with `--use-service-volume`.** `convox run` copies the service's `securityContext` but not its `emptyDir` volumes, so without the flag nothing is writable and artisan cannot boot. `convox exec` into a running process and Convox Timers need nothing.
+
+  ```bash
+  convox run app --use-service-volume php artisan tinker
+  ```
+
+- **No `composer`, `npm` or code edits in a running container.** They were never a fix that survived the next pod.
+- **Files the app writes at runtime outside `storage/` and `bootstrap/cache`** fail with `Read-only file system`. Octane's own ones are handled at build time: RoadRunner's `.rr.yaml` and FrankenPHP's `public/frankenphp-worker.php`.
+
+Local development is unaffected: `compose.yaml` runs the `development` image without any of this. Verified with section T of the verify skill (Docker equivalents, all four engines) and on a Convox local rack.
+
+---
+
 ## Trusted Proxies
 
 Both the local Caddy proxy and Convox's load balancer terminate TLS and forward the original scheme, host and client IP in `X-Forwarded-*` headers. Laravel ignores them until proxies are trusted. Containers are only ever reachable through the proxy, so we suggest trusting all proxies, locally and in Kubernetes:
@@ -497,14 +585,16 @@ Running migrations at container start keeps this repo dependency-free, but every
 A normal deploy migrates while the previous release is still serving. That overlap is fine when the migration only adds something the old code ignores. When the migration rewrites data the old code is still reading or writing, take the application down first and bring it back once the new release is the one serving:
 
 ```bash
-convox run app php artisan down --render="errors::503"
+convox run app --use-service-volume php artisan down --render="errors::503"
 # deploy the release that contains the migration
-convox run app php artisan up
+convox run app --use-service-volume php artisan up
 ```
 
 `convox.yml` sets `APP_MAINTENANCE_DRIVER=cache` and leaves `APP_MAINTENANCE_STORE` empty, so the flag lives on `CACHE_STORE`. One `down` and one `up` cover every app, queue, and scheduler container.
 
 `--render` renders the view once, at the moment you run `down`, and stores the HTML. Later requests return that HTML. The view is not rendered again while the migration is changing the schema, which is when rendering it fails and the visitor gets a broken error page instead of the maintenance page. Pass `errors::503` — `resources/views/errors/503.blade.php` when that file exists, Laravel's own 503 view otherwise — or the view you designed for maintenance mode.
+
+`--render` works on the read-only root. The view compiles into `storage/`, which is a writable volume, and the HTML is stored in the cache with the flag. `down` also writes `storage/framework/maintenance.php` inside the one-off container, which is why it needs `--use-service-volume`. That file does nothing with the cache driver.
 
 Run `down` on the release that is currently serving, before the migration starts, so the view is rendered by code that still matches the database. Run `up` only after the new release is handling traffic.
 
@@ -705,6 +795,8 @@ This file is included at server level by both the PHP-FPM and Octane Nginx confi
 
 **Static assets** — Files under `public/build/assets/` are Vite output with a content hash in the name, so nginx serves them with `Cache-Control: public, max-age=31536000, immutable`; a deploy changes the file names, not their content. `public/build/manifest.json` and other unhashed files in `public/` are not covered. Successful hits (2xx, 304) on those assets are left out of the access log together with `/up`, while 4xx/5xx under the same path are still logged. If a project serves unhashed files from `/build/assets/`, remove the `location /build/assets/` block.
 
+**Build output** — Production images have no git, Node/npm or Composer. A `build` stage runs `npm run build` and `composer dump-autoload`, and `production` takes the whole app from it except `vendor/` and `node_modules`, so anything the build writes (`public/build`, an Inertia SSR bundle in `bootstrap/ssr`, …) ships without extra config. `vendor/` comes from the `dependencies` stage as its own layer, plus the regenerated autoloader, so a release re-uploads only the app. A build step that edits other files under `vendor/` is lost. This uses `COPY --exclude`, which needs BuildKit 0.25 or newer: Convox racks 3.23.1+ have it, and so does a current Docker (verified on Engine 29.7). Run `composer` and `npm` commands in development or CI, not in a running production container.
+
 ---
 
 ## Swoole
@@ -733,9 +825,10 @@ Issues of timeouts may appear especially on small machines due to extreme CPU sp
 ### Quirks
 
 - **Composer + `php` binary** — There's an awkward issue where PHP is not properly referenced by Composer inside the FrankenPHP image. See: [Composer scripts referencing `php`](https://frankenphp.dev/docs/known-issues/#composer-scripts-referencing-php). The image installs that wrapper as `php`, with one change from the docs: it `exec`s FrankenPHP. The container command runs through it (`php artisan ...`), so without `exec` bash would be PID 1, ignore SIGTERM, and every stop would wait for the SIGKILL.
+- **Composer with Xdebug** — Composer normally restarts PHP without Xdebug, through flags the wrapper cannot pass on. The development image sets `COMPOSER_ALLOW_XDEBUG=1` so Composer skips that restart and works, a little slower.
 - **`octane:frankenphp` vs `octane:serve`** — The FrankenPHP docs suggest running `php artisan octane:frankenphp` directly instead of `php artisan octane:serve --server=frankenphp`. While functionally identical, the former does not load configuration from the standard `config/octane.php` file.
 - **Double web server debate** — [Laravel Forge](https://forge.laravel.com/) appears to run FrankenPHP behind Nginx, similar to other Octane providers. Using a double web server can mask bugs, so this project uses the [official Docker approach recommended in the Laravel docs](https://laravel.com/framework/docs/master/octane#frankenphp-via-docker) instead. See also [this Octane issue](https://github.com/laravel/octane/issues/889) confirming Forge's Nginx setup.
-- **Tinker does not work** — `php artisan tinker` cannot run inside the FrankenPHP image. FrankenPHP embeds PHP as a library (ZTS build) and replaces the standard `php` binary with its own wrapper, which is incompatible with PsySH's interactive REPL.
+- **Interactive Tinker does not work** — the `php artisan tinker` shell fails with `Call to undefined function cli_set_process_title()`. FrankenPHP embeds PHP as a library (ZTS build) and replaces the standard `php` binary with its own wrapper, which is incompatible with PsySH's interactive REPL. One-shot `php artisan tinker --execute="..."` works.
 
 ### Compose Volumes
 

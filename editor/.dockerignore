@@ -60,6 +60,8 @@ Thumbs.db
 # Dev-only
 sail
 openapi.yaml
+# RoadRunner binary downloaded in development; production downloads its own
+rr
 
 # Misc
 *.log

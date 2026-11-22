@@ -175,7 +175,7 @@
               "handlesCardPayment": false,
               "handlesGoodsOrServices": false,
               "isWebApplication": false,
-              "privilegeLevel": "UID 1000"
+              "privilegeLevel": "UID 65534 (nobody)"
             }
           },
           {
@@ -254,7 +254,7 @@
                   "severity": "Medium",
                   "type": "Elevation of privilege",
                   "description": "RCE in the app running as root.",
-                  "mitigation": "All processes run as non-root UID 1000.",
+                  "mitigation": "Non-root UID 65534 (nobody) enforced by runAsNonRoot; allowPrivilegeEscalation false; all capabilities dropped; RuntimeDefault seccomp; read-only root filesystem (convox.yml securityContext, every service).",
                   "modelType": "STRIDE",
                   "new": false,
                   "number": 6,
@@ -285,13 +285,39 @@
                   "new": false,
                   "number": 8,
                   "score": ""
+                },
+                {
+                  "id": "cd76877f-add8-4cd9-a256-9835c32997f8",
+                  "title": "Build tools aid post-exploitation",
+                  "status": "Mitigated",
+                  "severity": "Medium",
+                  "type": "Elevation of privilege",
+                  "description": "Code execution in the app uses git, npm or Composer in the image to fetch and install code.",
+                  "mitigation": "Git, Node/npm and Composer exist only in the dependencies, build and development stages. Production images get the built assets, autoloader and package manifest, not the tools (verify skill section S).",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 22,
+                  "score": ""
+                },
+                {
+                  "id": "e9bf4240-0c6e-4db2-a24b-b9d657154a3a",
+                  "title": "Tampering with application code or assets",
+                  "status": "Mitigated",
+                  "severity": "High",
+                  "type": "Tampering",
+                  "description": "Code execution in the app rewrites vendor/, app code or public/build JavaScript (a skimmer served to every visitor).",
+                  "mitigation": "readOnlyRootFilesystem: only /tmp, storage/, bootstrap/cache and $HOME are writable emptyDirs. Without it, code is still root-owned: UID 65534 owns only storage/ and bootstrap/cache. Residual: bootstrap/cache and compiled views hold PHP the app includes; they live as long as the pod.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 23,
+                  "score": ""
                 }
               ],
               "hasOpenThreats": false,
               "handlesCardPayment": false,
               "handlesGoodsOrServices": false,
               "isWebApplication": true,
-              "privilegeLevel": "UID 1000"
+              "privilegeLevel": "UID 65534 (nobody)"
             }
           },
           {
@@ -368,7 +394,7 @@
               "handlesCardPayment": false,
               "handlesGoodsOrServices": false,
               "isWebApplication": false,
-              "privilegeLevel": "UID 1000"
+              "privilegeLevel": "UID 65534 (nobody)"
             }
           },
           {
@@ -432,7 +458,7 @@
               "handlesCardPayment": false,
               "handlesGoodsOrServices": false,
               "isWebApplication": false,
-              "privilegeLevel": "UID 1000"
+              "privilegeLevel": "UID 65534 (nobody)"
             }
           },
           {
@@ -461,7 +487,7 @@
             "data": {
               "type": "tm.Process",
               "name": "Image build (CI)",
-              "description": "docker build with composer/npm installs, GIT_TAG/COMMIT_SHA build args.",
+              "description": "docker build: composer install and the npm build run in build-only stages, GIT_TAG/COMMIT_SHA build args.",
               "outOfScope": false,
               "reasonOutOfScope": "",
               "threats": [
@@ -496,7 +522,7 @@
               "handlesCardPayment": false,
               "handlesGoodsOrServices": false,
               "isWebApplication": false,
-              "privilegeLevel": "UID 1000"
+              "privilegeLevel": "UID 65534 (nobody)"
             }
           },
           {
@@ -653,7 +679,7 @@
                   "severity": "High",
                   "type": "Information disclosure",
                   "description": "Static AWS keys in env.",
-                  "mitigation": "Keys are runtime env vars, not in the image; scoping the IAM policy is left to each project.",
+                  "mitigation": "On AWS racks, use EKS Pod Identity (README \"AWS Credentials (Pod Identity)\"): pod_identity_agent_enable=true, a bucket-scoped policy per service via accessControl.awsPodIdentity.policyArns, and AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY left empty. Static keys remain on non-AWS racks and locally.",
                   "modelType": "STRIDE",
                   "new": false,
                   "number": 19,

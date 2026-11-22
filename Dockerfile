@@ -12,7 +12,8 @@ FROM alpine:${ALPINE_VERSION} AS base
 
 ARG PHP_VERSION
 ARG USER
-ARG WWWUSER=1000
+# The image's own nobody; compose builds development as sail with the host UID
+ARG WWWUSER=65534
 
 ENV USER=${USER}
 
@@ -22,7 +23,6 @@ WORKDIR /app
 RUN apk add --no-cache \
     curl \
     nginx \
-    npm \
     php${PHP_VERSION} \
     php${PHP_VERSION}-cli \
     php${PHP_VERSION}-ctype \
@@ -42,7 +42,6 @@ RUN apk add --no-cache \
     php${PHP_VERSION}-xmlreader \
     php${PHP_VERSION}-xmlwriter \
     supervisor \
-    git \
     # Common packages
     php${PHP_VERSION}-pcntl \
     php${PHP_VERSION}-bcmath \
@@ -55,17 +54,15 @@ RUN apk add --no-cache \
     php${PHP_VERSION}-pdo_mysql
 
 # - Create version-agnostic php alias (Alpine only ships /usr/bin/php${PHP_VERSION})
-# - Install Composer
 # - Fix permissions
 # - Create user with UID matching host user (for file permission compatibility)
 # - Create group and user only if they don't already exist
 RUN ln -sf /usr/bin/php${PHP_VERSION} /usr/bin/php; \
     ln -sf /usr/bin/php${PHP_VERSION} /usr/local/bin/php; \
-    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/bin/ --filename=composer; \
     getent group ${USER} || addgroup ${USER}; \
     getent passwd ${USER} || adduser -u ${WWWUSER} -G ${USER} -D -h /home/${USER} ${USER}; \
     mkdir -p /home/${USER} && chown ${WWWUSER}:${WWWUSER} /home/${USER}; \
-    chown -R ${WWWUSER}:${WWWUSER} /app /run /var/lib/nginx /var/log/nginx
+    chown -R ${WWWUSER}:${WWWUSER} /run /var/lib/nginx /var/log/nginx
 
 ENV HOME=/home/${USER}
 ENV RUN_MIGRATIONS=true
@@ -99,12 +96,29 @@ FROM base AS dependencies
 
 ARG COMPOSER_AUTH
 
+RUN apk add --no-cache git
+COPY --link --from=composer:2 /usr/bin/composer /usr/bin/composer
+
 COPY --link composer.* .
 COPY --link packages/ packages/
 
 RUN --mount=type=cache,target=/tmp/composer-cache \
     COMPOSER_CACHE_DIR=/tmp/composer-cache \
     composer install --optimize-autoloader --no-interaction --no-dev --no-scripts --prefer-dist
+
+# =============================================================================
+# Build layer
+# =============================================================================
+FROM dependencies AS build
+
+RUN apk add --no-cache npm
+
+COPY --link . .
+
+RUN --mount=type=cache,target=/tmp/npm-cache \
+    npm ci --cache /tmp/npm-cache && \
+    npm run build && \
+    composer dump-autoload --optimize --classmap-authoritative
 
 # =============================================================================
 # Php-fpm
@@ -132,6 +146,8 @@ ARG ENGINE
 
 ENV OCTANE_SERVER=${ENGINE}
 ENV OCTANE_OPTIONS=""
+# Set by the engine stage; OCTANE_OPTIONS is left to the app
+ENV OCTANE_SERVER_OPTIONS=""
 ENV OCTANE_PORT=8000
 
 # Octane requires sockets and posix (for posix_kill)
@@ -147,6 +163,11 @@ COPY --link confs/nginx/octane.conf /etc/nginx/conf.d/laravel.conf
 # RoadRunner
 # =============================================================================
 FROM octane AS roadrunner
+
+# Without --rr-config Octane touches .rr.yaml at every start, which a read-only root rejects.
+# An .rr.yaml shipped by the app replaces this empty one
+ENV OCTANE_SERVER_OPTIONS="--rr-config=.rr.yaml"
+RUN touch .rr.yaml
 
 # =============================================================================
 # Swoole
@@ -177,24 +198,19 @@ ENV OCTANE_HTTPS=true
 # Production-specific nginx config
 COPY --link confs/nginx/enable-sendfile.conf /etc/nginx/conf.d/enable-sendfile.conf
 
-# Copy pre-built vendor from dependencies
-COPY --link --chown=${WWWUSER}:${WWWUSER} --from=dependencies /app/vendor vendor
+COPY --link --from=dependencies /app/vendor vendor
+COPY --link --from=build --exclude=vendor --exclude=node_modules /app .
+COPY --link --from=build /app/vendor/composer vendor/composer
+COPY --link --from=build /app/vendor/autoload.php vendor/autoload.php
 
-# Copy application source
-COPY --link --chown=${WWWUSER}:${WWWUSER} . .
+# Code stays root-owned; the app user writes only to storage/ and bootstrap/cache.
+# storage:link at build: the root filesystem is read-only at runtime
+RUN chown -R ${WWWUSER}:${WWWUSER} storage bootstrap/cache && \
+    ln -sfn ../storage/app/public public/storage
 
-# Download RoadRunner binary (only if engine is roadrunner)
 RUN if [ "${ENGINE}" = "roadrunner" ]; then \
         ./vendor/bin/rr get-binary --no-interaction --no-config --quiet; \
     fi
-
-# Build frontend, generate optimized autoload, cleanup
-RUN --mount=type=cache,target=/tmp/npm-cache \
-    npm ci --cache /tmp/npm-cache && \
-    npm run build && \
-    rm -rf node_modules && \
-    composer dump-autoload --optimize --classmap-authoritative && \
-    chown -R ${WWWUSER}:${WWWUSER} bootstrap/cache storage
 
 # Switch to non-root user for runtime
 USER ${WWWUSER}
@@ -214,8 +230,11 @@ ENV OCTANE_HTTPS=false
 # Install dev-only packages
 RUN apk --no-cache add \
     bash \
+    git \
+    npm \
     php${PHP_VERSION}-dev \
     php${PHP_VERSION}-xdebug
+COPY --link --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 # Enable xdebug
 COPY --link confs/xdebug.ini /etc/php${PHP_VERSION}/conf.d/50_xdebug.ini

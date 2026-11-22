@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+# An empty volume mounted over storage/ hides the folders Laravel expects
+mkdir -p storage/app/private storage/app/public storage/framework/cache/data \
+    storage/framework/sessions storage/framework/testing storage/framework/views storage/logs
+
 # Development environment
 if [ "${APP_ENV:-production}" = "local" ]; then
     if [ ! -f "vendor/autoload.php" ]; then
