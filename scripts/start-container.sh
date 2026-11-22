@@ -22,11 +22,26 @@ if [ "${APP_ENV:-production}" = "local" ]; then
 fi
 
 if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
-    if php artisan migrate:status >/dev/null; then
-        php artisan migrate --force --isolated=1
-    else
-        php artisan migrate --force
-    fi
+    pending=0
+    php artisan migrate:status --pending=2 || pending=$?
+    case "$pending" in
+        0)
+            # Nothing to migrate: skip the lock, so a stale one cannot block scaling
+            ;;
+        2)
+            # 75 only means another container holds the migration lock: wait here,
+            # because a restart would count toward Convox's crashRestartLimit
+            until php artisan migrate --force --isolated=75; do
+                status=$?
+                [ "$status" -eq 75 ] || exit "$status"
+                sleep 2
+            done
+            ;;
+        *)
+            # No migrations table yet: nothing to lock against
+            php artisan migrate --force
+            ;;
+    esac
 fi
 
 # Production environment

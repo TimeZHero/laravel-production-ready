@@ -267,7 +267,7 @@
                   "severity": "High",
                   "type": "Tampering",
                   "description": "Several replicas migrate at once on deploy.",
-                  "mitigation": "migrate --force --isolated=1; unlocked bootstrap only when the migrations table is missing; first deploy with one replica.",
+                  "mitigation": "migrate --force --isolated=75 only when migrate:status --pending reports pending migrations; lock losers wait for the lock instead of booting; unlocked bootstrap only when migrate:status fails (missing migrations table; a database blip in that instant is an accepted race); first deploy with one replica.",
                   "modelType": "STRIDE",
                   "new": false,
                   "number": 7,

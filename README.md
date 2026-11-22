@@ -566,21 +566,54 @@ Not implemented in this repo — documented here as the natural next step if Opt
 
 ```sh
 if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
-    if php artisan migrate:status >/dev/null; then
-        php artisan migrate --force --isolated=1
-    else
-        php artisan migrate --force
-    fi
+    pending=0
+    php artisan migrate:status --pending=2 || pending=$?
+    case "$pending" in
+        0)
+            ;;
+        2)
+            until php artisan migrate --force --isolated=75; do
+                status=$?
+                [ "$status" -eq 75 ] || exit "$status"
+                sleep 2
+            done
+            ;;
+        *)
+            php artisan migrate --force
+            ;;
+    esac
 fi
 ```
 
-`--isolated` takes a cache lock so concurrently booting containers don't migrate at the same time. The container that loses the lock **skips** the migration and exits with the value you pass. `1` makes the entrypoint fail and the orchestrator restart it, so the retry is the wait. A bare `--isolated` exits `0`, and that container would boot against a database still mid-migration.
+`migrate:status --pending=2` decides which of three paths a container takes. It exits `0` when nothing is pending, with the value you pass (`2`) when migrations are pending, and `1` when the `migrations` table does not exist. Its output (`No pending migrations`, or the list of pending ones) stays in the container log.
 
-`1` is also what a failed migration returns. Both cases should stop the boot, so there is nothing to tell apart, and there is no fallback to an unlocked `migrate` on that path — retrying a genuinely failed migration without the lock is worse than a crash loop.
+- **Nothing pending (`0`)** — the container boots without running `migrate` and without touching the lock. This is every boot except the first ones of a release that brings migrations: autoscaling, node rotation, an evicted pod, a deploy with no new migrations.
+- **Pending (`2`)** — `migrate --isolated` runs, so concurrently booting containers don't migrate at the same time (details below).
+- **No `migrations` table (`1`)** — a plain, unlocked `migrate` bootstraps the schema (details below).
 
-The `migrate:status` check exists for one narrow case: a brand-new database has no `migrations` table yet, so there is also nothing for `--isolated` to lock against — taking the lock itself fails, regardless of cache store. `migrate:status` exits non-zero exactly when that table is missing, so the entrypoint falls back to a plain `migrate --force` only then, bootstrapping the schema (including the `cache`/`cache_locks` tables, if `CACHE_STORE=database`) in one unlocked pass. Every later boot finds the table and takes the isolated path. This keeps first boot zero-config for local dev and fresh deploys alike, with one caveat: if the very first deploy itself starts with more than one replica, both can see the same missing table and race on the same bootstrap migration — deploy the first release with a single replica.
+`--isolated` takes a cache lock. The container that loses the lock **skips** the migration and exits with the value you pass. A bare `--isolated` exits `0`, and that container would boot against a database still mid-migration.
 
-Running migrations at container start keeps this repo dependency-free, but every booting app container attempts them. For stricter control, run them once per release from CI (`convox build` → `convox run app php artisan migrate --force` → `convox releases promote`) and set `RUN_MIGRATIONS=false` for every service.
+`75` is returned only when another container holds the lock, so the entrypoint waits and tries again every 2 seconds. When the winner finishes, the next attempt takes the lock, finds nothing pending, and the container boots. Waiting matters on Convox: an exit is a container restart, and `crashRestartLimit` (see [Deploy Failure Detection](#deploy-failure-detection)) would read the restarts of every replica waiting out a long migration as a crash loop and roll the deploy back. Any other non-zero status (a failed migration, an unreachable database or cache store, which throw and exit `1`) stops the boot at once. There is no fallback to an unlocked `migrate`: retrying a failed migration without the lock is worse than a crash.
+
+The wait has no limit of its own: the orchestrator sets it. On Convox the startup probe ends it.
+
+**Known limitation: a stale lock blocks releases that migrate, for up to an hour.** A migration that throws releases the lock (Laravel's `finally`), so an ordinary failure rolls back in about 30 seconds and the next deploy starts clean. The lock is left behind only when the process dies without reaching that `finally`:
+
+- the container is killed: OOMKill, node loss, the startup probe killing a migration that runs past its ~125 seconds, or a rollback stopping a migration in progress;
+- PHP dies on a fatal error, for example `memory_limit` exhausted by a data migration.
+
+Until the lock expires, one hour later (Laravel's default for `--isolated`), every container that has migrations pending waits on it, and each such deploy fails within about five minutes. Containers with nothing pending skip the lock, so the release that is serving keeps scaling, and a deploy without new migrations still goes through. Shortening the lifetime means overriding the framework's `migrate` command (`isolationLockExpiresAt()`), which was rejected as too invasive. Release it by hand from a pod that is already serving (`convox exec` skips the entrypoint; `convox run app` would wait on the same lock):
+
+```bash
+convox exec <app-pid> php artisan tinker --execute="Cache::lock('framework/command-migrate')->forceRelease()"
+```
+
+The unlocked path exists for one narrow case: a brand-new database has no `migrations` table yet, so there is also nothing for `--isolated` to lock against — taking the lock itself fails, regardless of cache store. The entrypoint then runs a plain `migrate --force`, bootstrapping the schema (including the `cache`/`cache_locks` tables, if `CACHE_STORE=database`) in one unlocked pass. Every later boot finds the table and takes one of the other two paths. This keeps first boot zero-config for local dev and fresh deploys alike, with two caveats:
+
+- If the very first deploy starts with more than one replica, both can see the same missing table and race on the same bootstrap migration. Deploy the first release with a single replica.
+- An exception (an unreachable database, for one) also exits `1`, so it takes the unlocked path too. Usually the `migrate` that follows fails the same way and stops the boot. Only a database that drops for the status check and is back for the `migrate`, while another container migrates under the lock, lets two migrations run at once. That window is accepted.
+
+Running migrations at container start keeps this repo dependency-free, but every booting app container checks for them, and a migration has to finish inside the startup probe's budget (about two minutes from container start). Run a longer one before the deploy with `convox run`, or raise the probe's `failureThreshold` for that release. For stricter control, run them once per release from CI (`convox build` → `convox run app --use-service-volume php artisan migrate --force` → `convox releases promote`) and set `RUN_MIGRATIONS=false` for every service.
 
 A normal deploy migrates while the previous release is still serving. That overlap is fine when the migration only adds something the old code ignores. When the migration rewrites data the old code is still reading or writing, take the application down first and bring it back once the new release is the one serving:
 

@@ -283,12 +283,13 @@ docker run --rm -v "$TMPDIR:/app" -w /app node:24-alpine \
 
 ### 10. Patch start-container.sh
 
-In `$TMPDIR/scripts/start-container.sh`, make three replacements so the container doesn't fail on missing DB or missing Filament (these tests run with `DB_CONNECTION=null`, so both migration branches hit an unreachable connection):
+In `$TMPDIR/scripts/start-container.sh`, make these replacements so the container doesn't fail on missing DB or missing Filament (these tests run with `DB_CONNECTION=null`, so `migrate:status` fails and the unlocked branch hits an unreachable connection; the locked loop is patched too, in case a branch changes):
 
 | Original                                   | Replacement                                                       |
 | ------------------------------------------- | -------------------------------------------------------------------- |
-| `    php artisan migrate --force --isolated=1` | `    php artisan migrate --force --isolated=1 2>/dev/null \|\| true` |
-| `    php artisan migrate --force` (inside the `else` branch) | `    php artisan migrate --force 2>/dev/null \|\| true` |
+| `    php artisan migrate:status --pending=2 \|\| pending=$?` | `    php artisan migrate:status --pending=2 2>/dev/null \|\| pending=$?` |
+| `            until php artisan migrate --force --isolated=75; do` | `            until php artisan migrate --force --isolated=75 2>/dev/null \|\| true; do` |
+| `            php artisan migrate --force` (inside the `*)` branch) | `            php artisan migrate --force 2>/dev/null \|\| true` |
 | `php artisan filament:optimize`             | `php artisan filament:optimize 2>/dev/null \|\| true`                |
 
 ### 11. Build all 8 images
@@ -639,6 +640,76 @@ which defaults to `true`.
 
 ---
 
+### V. Startup — Migration Lock Wait
+
+A container that loses the migration lock must wait in the entrypoint, not
+exit: on Convox every exit is a restart, and `crashRestartLimit: 1` rolls the
+deploy back on the second one. A migration that really fails must still exit.
+
+These checks need a real database and the **unpatched** entrypoint (step 10
+makes migration failures harmless), so they mount the repo's own script over
+the image's. Run them for each of the 4 production images.
+
+```bash
+REPO=/path/to/laravel-production-ready
+docker network create lpr-test-v
+docker run -d --name lpr-test-v-db --network lpr-test-v \
+    -e MARIADB_ROOT_PASSWORD=secret mariadb:11
+mkdir -p "$TMPDIR/v"
+# The script is 644 in git (the Dockerfiles add the exec bit), so mount an executable copy
+install -m 755 "$REPO/scripts/start-container.sh" "$TMPDIR/v/start-container.sh"
+cat > "$TMPDIR/v/slow.php" <<'PHP'
+<?php
+use Illuminate\Database\Migrations\Migration;
+return new class extends Migration {
+    public function up(): void { sleep(20); }
+};
+PHP
+cat > "$TMPDIR/v/broken.php" <<'PHP'
+<?php
+use Illuminate\Database\Migrations\Migration;
+return new class extends Migration {
+    public function up(): void { throw new RuntimeException('broken migration'); }
+};
+PHP
+```
+
+Per engine, recreate the database (`docker exec lpr-test-v-db mariadb -psecret
+-e 'DROP DATABASE IF EXISTS v; CREATE DATABASE v'`) and define:
+
+```bash
+V_RUN="docker run --network lpr-test-v \
+    -v $TMPDIR/v/start-container.sh:/usr/local/bin/start-container:ro \
+    -e APP_ENV=testing -e APP_KEY=base64:dGVzdGtleWZvcnRlc3RpbmcxMjM0NTY3ODkwYWJjZGU= \
+    -e LOG_CHANNEL=stderr -e CACHE_STORE=database \
+    -e DB_CONNECTION=mariadb -e DB_HOST=lpr-test-v-db -e DB_DATABASE=v \
+    -e DB_USERNAME=root -e DB_PASSWORD=secret"
+SLOW="-v $TMPDIR/v/slow.php:/app/database/migrations/2099_01_01_000000_slow.php:ro"
+BROKEN="-v $TMPDIR/v/broken.php:/app/database/migrations/2099_01_01_000001_broken.php:ro"
+# Not yet run when V6 starts (SLOW already ran in step 2)
+SLOW2="-v $TMPDIR/v/slow.php:/app/database/migrations/2099_01_01_000002_slow.php:ro"
+```
+
+1. Bootstrap the schema: `$V_RUN --rm lpr-test:ENGINE-production php artisan --version` (exit 0).
+2. `$V_RUN -d --name lpr-test-v-a $SLOW lpr-test:ENGINE-production`; wait until its log contains `Running migrations.` (the migration's own line has no newline until it finishes, so Docker only logs it after the lock is free).
+3. `$V_RUN -d --name lpr-test-v-b $SLOW lpr-test:ENGINE-production`.
+4. Run V1–V3, then `docker rm -f lpr-test-v-a lpr-test-v-b`.
+5. Run V4.
+6. Leave a stale lock, as a migrating container killed mid-run would: `$V_RUN --rm -e RUN_MIGRATIONS=false lpr-test:ENGINE-production php artisan tinker --execute="Cache::lock('framework/command-migrate', 3600)->get() or exit(1);"` (exit 0). Then run V5 and V6.
+
+| # | Check | Command | Expected |
+|---|-------|---------|----------|
+| V1 | Loser waits instead of exiting | 10s after step 3: `docker inspect -f '{{.State.Running}}' lpr-test-v-b` and `docker logs lpr-test-v-b 2>&1` | `true`; log contains `The [migrate] command is already running.` |
+| V2 | Loser boots once the lock frees | Poll `docker inspect -f '{{.State.Health.Status}}'` on both, up to 60s | Both `healthy`; `lpr-test-v-b` never exited (`RestartCount` and exit code untouched, `.State.StartedAt` unchanged) |
+| V3 | Loser did not run the migration | `docker logs lpr-test-v-b 2>&1` | Does **not** contain a `2099_01_01_000000_slow` line with `DONE` |
+| V4 | Broken migration still exits | `timeout 60 $V_RUN --rm $BROKEN lpr-test:ENGINE-production php artisan --version; echo $?` | Exit code `1` (not `124`: it did not hang); output contains `broken migration` |
+| V5 | Nothing pending skips the lock | `timeout 60 $V_RUN --rm lpr-test:ENGINE-production php artisan --version; echo $?` | Exit code `0`; output contains `No pending migrations` and `Laravel Framework`; does **not** contain `already running` |
+| V6 | Pending migration waits on the stale lock | `$V_RUN -d --name lpr-test-v-c $SLOW2 lpr-test:ENGINE-production`; after 15s `docker inspect -f '{{.State.Running}}' lpr-test-v-c` and its logs; then `docker rm -f lpr-test-v-c` | `true`; log contains `already running` and no `2099_01_01_000002_slow` line with `DONE` |
+
+Clean up after the last engine: `docker rm -f lpr-test-v-db && docker network rm lpr-test-v`.
+
+---
+
 ### R. Startup — Scheduler Command
 
 The app prints `php artisan about` at boot. The scheduler's `convox.yml`
@@ -851,6 +922,10 @@ for name in lpr-test-fpm-production lpr-test-fpm-development \
             lpr-test-frankenphp-production lpr-test-frankenphp-development; do
     docker rm -f "$name" 2>/dev/null || true
 done
+
+# Section V leftovers
+docker rm -f lpr-test-v-a lpr-test-v-b lpr-test-v-c lpr-test-v-db 2>/dev/null || true
+docker network rm lpr-test-v 2>/dev/null || true
 
 # Remove all images
 for tag in lpr-test:fpm-production lpr-test:fpm-development \
