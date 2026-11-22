@@ -357,6 +357,7 @@ docker run -d --name "lpr-test-ENGINE-production" \
     -e SESSION_DRIVER=file \
     -e CACHE_STORE=array \
     -e QUEUE_CONNECTION=sync \
+    -e OCTANE_OPTIONS=--workers=2 \
     "lpr-test:ENGINE-production"
 ```
 
@@ -523,6 +524,7 @@ For **frankenphp-development** (1 container):
 |---|-------|-----------|---------|----------|
 | H1 | OCTANE_HTTPS=true | roadrunner-production, swoole-production, frankenphp-production (3 containers) | `docker exec CONTAINER env \| grep OCTANE_HTTPS` | `OCTANE_HTTPS=true` |
 | H2 | RoadRunner config flag set by its stage only | roadrunner-production, swoole-production | `docker exec CONTAINER sh -c 'ps -o args \| grep [o]ctane:start'` | roadrunner: contains `--rr-config=.rr.yaml`; swoole: does not |
+| H3 | `OCTANE_OPTIONS` reaches Octane | roadrunner-production, swoole-production, frankenphp-production | `docker exec CONTAINER sh -c 'for f in /proc/[0-9]*/cmdline; do tr "\0" " " < "$f"; echo; done' \| grep octane:start` | Contains `--workers=2` (set in step 12) |
 
 ---
 
