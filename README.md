@@ -22,6 +22,7 @@ Includes an ideal local environment by leveraging [Laravel Sail](https://github.
 - [AWS Credentials (Pod Identity)](#aws-credentials-pod-identity)
 - [Security Context](#security-context)
 - [Trusted Proxies](#trusted-proxies)
+- [Rack Parameters](#rack-parameters)
 - [Application Safeguards](#application-safeguards)
 - [Scheduler](#scheduler)
 - [Container Startup](#container-startup)
@@ -438,6 +439,19 @@ On Convox, the real client IP additionally requires PROXY protocol — otherwise
 
 convox rack params set proxy_protocol=true -r <rack>
 ```
+
+---
+
+## Rack Parameters
+
+[`rack.json`](rack.json) is a sample set of rack parameters for AWS: only values that differ from Convox's defaults. Azure, GCP and DigitalOcean racks support few of them (no `proxy_protocol`, network policies or pod security standards, for example), so review the file against your provider's parameters. On an existing AWS rack, some of them recreate resources:
+
+- `high_availability` is install-time only.
+- `proxy_protocol` recreates the load balancer: 5–10 minutes of downtime. It needs `disable_convox_resolver`, otherwise pods calling an app's public domain reach the router without the PROXY header and are rejected.
+- `fast_image_pull_enable` and `ebs_volume_encryption_enabled` replace every node.
+- `eks_access_entries` cannot be turned off again. `aws-auth` keeps working, so existing `kubectl` access is unchanged.
+- `network_policy_enable` blocks calls between apps on their internal addresses. Calls through public domains still work.
+- `pod_security_standard: restricted` only warns (`pod_security_mode` defaults to `warn`). Set `enforce` only when every app on the rack hardens all its services like [`convox.yml`](convox.yml) and uses managed resources (`rds-*`, `elasticache-*`): containerized `mariadb`, `redis` and the like are rejected.
 
 ---
 
