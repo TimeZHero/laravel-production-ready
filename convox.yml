@@ -120,14 +120,14 @@ services:
     termination:
       grace: 70
     scale:
-      count: 0-5
+      count: 0-1
       autoscale:
         custom:
           - type: aws-sqs-queue
             metadata:
               queueURL: ${SQS_PREFIX}/${SQS_QUEUE}
               awsRegion: eu-west-1
-              queueLength: "10"
+              queueLength: "1"
       cpu: 250
       memory: 320
 

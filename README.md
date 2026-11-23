@@ -503,7 +503,7 @@ On each database connection in `config/database.php` (`mysql`, `pgsql`, …), al
 
 ## Queue on SQS
 
-The `queue` service runs 0–5 workers, scaled by [KEDA](https://keda.sh) on the length of an SQS queue. `queueLength: "10"` is the backlog each worker is expected to handle: KEDA runs one worker per 10 messages, rounded up and counting jobs already running. One job wakes the first worker, 11 start a second, 41 or more run all five. Lower it to drain faster with more workers.
+The `queue` service scales to zero with [KEDA](https://keda.sh): no worker while the SQS queue is empty, one as soon as a message arrives, counting jobs already running so a worker is not removed mid-job. `count: 0-1` caps it at one worker. To run more, raise the maximum; `queueLength` is then the backlog each worker covers (`"10"` runs one worker per 10 messages).
 
 Convox does not create the queue. Once per environment, outside Convox:
 
@@ -827,7 +827,7 @@ The rule for every service: **PHP must hit its own `memory_limit` before the pod
 | Service     | `scale.cpu` | `scale.memory` | Count          | Sized for                                             |
 | ----------- | ----------- | -------------- | -------------- | ----------------------------------------------------- |
 | `app`       | 250         | 1024           | 1–30, autoscaled on CPU 70% / memory 90% | Concurrent requests (FPM children or Octane workers) |
-| `queue`     | 250         | 320            | 0–5, KEDA on SQS queue length (10 per worker) | One worker, one job at a time |
+| `queue`     | 250         | 320            | 0–1, KEDA wakes it on the first SQS message | One worker, one job at a time |
 | `scheduler` | 120         | 256            | 1              | `schedule:work` plus one `schedule:run` child         |
 
 ### What a PHP Process Costs
