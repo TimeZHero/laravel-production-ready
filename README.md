@@ -523,6 +523,26 @@ Inspecting jobs:
 
 **Racks without KEDA** (anything but AWS, or `keda_enable=false`): Convox ignores `scale.autoscale` and runs the minimum of `count`, so `app` stays at one replica and `queue` at zero, with jobs never processed. There, use `scale.targets` on `app` (`cpu: 70`, `memory: 90`), give `queue` `count: 1` without `autoscale`, and set `QUEUE_CONNECTION` to `redis` or `database`, dropping `SQS_PREFIX` and `SQS_QUEUE`.
 
+**Database queue instead of SQS** (undecided, not in `convox.yml`): KEDA's `mysql` scaler can count the `jobs` table instead. It keeps scale-to-zero without SQS, at the cost of one query every 30 seconds (`pollingInterval`), 2,880 a day per queue. The query is a count on the indexed `queue` column, and an awake worker already polls the same table every 3 seconds (`--sleep=3`). A higher `scale.autoscale.pollingInterval` means fewer queries, and the first job then waits longer for its worker.
+
+```yaml
+autoscale:
+  custom:
+    - type: mysql
+      metadata:
+        host: ${DB_HOST}
+        port: "3306"
+        dbName: ${DB_DATABASE}
+        username: ${DB_USERNAME}
+        passwordFromEnv: DB_PASSWORD
+        query: SELECT COUNT(*) FROM jobs WHERE queue = 'default' AND available_at <= UNIX_TIMESTAMP()
+        queryValue: "1"
+```
+
+- Running jobs stay in `jobs` until they finish, so they keep their worker. Delayed jobs don't wake it before they are due.
+- `passwordFromEnv` reads the worker's own environment, so the password stays out of `convox.yml`. `${DB_*}` must come from `convox env set`.
+- Needs a database outside the cluster, such as RDS, reachable from the nodes: the rack's network policies keep KEDA away from a containerized `db`.
+
 ---
 
 ## Scheduler
