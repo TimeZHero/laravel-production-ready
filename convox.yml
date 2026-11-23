@@ -2,9 +2,11 @@ resources:
   db:
     type: mariadb
     options:
+      version: "12"
       storage: 2
   redis:
     type: redis
+    image: valkey/valkey:9
 
 environment:
   - APP_NAME=MY_APP
