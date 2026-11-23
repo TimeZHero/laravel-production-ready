@@ -506,12 +506,8 @@ Don't use `runInBackground()`. A timer's `schedule:run` exits immediately and th
 
 ```yaml
 scheduler:
-  build:
-    manifest: Dockerfile
   command: sh -c "php artisan schedule:list && exec php artisan schedule:work --whisper"
   internal: true
-  health:
-    disable: true
   termination:
     grace: 45
   resources:
@@ -684,7 +680,7 @@ Every time limit here sits inside a longer one. When an inner limit is longer th
 | php-fpm | `request_terminate_timeout` (`confs/php-fpm.conf`)   | 60s   |
 | Octane  | `max_execution_time` (your app's `config/octane.php`) | 30    |
 | nginx   | `fastcgi_read_timeout` (nginx default)               | 60s   |
-| Convox  | `timeout` on the `app` service                       | 60    |
+| Convox  | `timeout` on the `app` service (Convox default)      | 60    |
 
 On Linux, `max_execution_time` only counts time spent running PHP code. A request waiting on the database or an HTTP call can outlive it, so `request_terminate_timeout` is the wall-clock limit that actually ends a php-fpm request. The Octane engines use Octane's own `max_execution_time` instead; nginx's `proxy_read_timeout` in front of them is 3600 to keep WebSockets open, so the Octane setting is the only request limit there.
 

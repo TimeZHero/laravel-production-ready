@@ -78,9 +78,7 @@ services:
     deployment: *deployment
     startupProbe:
       path: /up
-      grace: 5
       interval: 5
-      timeout: 4
       failureThreshold: 24
     health:
       grace: 5
@@ -97,7 +95,6 @@ services:
       preStop: "sleep 5"
     termination:
       grace: 75
-    timeout: 60
     scale:
       count: 1-30
       targets:
@@ -116,8 +113,6 @@ services:
     securityContext: *securityContext
     volumeOptions: *volumeOptions
     deployment: *deployment
-    health:
-      disable: true
     termination:
       grace: 70
     scale:
@@ -134,8 +129,6 @@ services:
     securityContext: *securityContext
     volumeOptions: *volumeOptions
     deployment: *deployment
-    health:
-      disable: true
     termination:
       grace: 45
     scale:
