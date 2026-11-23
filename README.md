@@ -24,6 +24,7 @@ Includes an ideal local environment by leveraging [Laravel Sail](https://github.
 - [Trusted Proxies](#trusted-proxies)
 - [Rack Parameters](#rack-parameters)
 - [Application Safeguards](#application-safeguards)
+- [Queue on SQS](#queue-on-sqs)
 - [Scheduler](#scheduler)
 - [Container Startup](#container-startup)
 - [Deploy Failure Detection](#deploy-failure-detection)
@@ -500,6 +501,30 @@ On each database connection in `config/database.php` (`mysql`, `pgsql`, …), al
 
 ---
 
+## Queue on SQS
+
+The `queue` service runs 0–5 workers, scaled by [KEDA](https://keda.sh) on the length of an SQS queue. `queueLength: "10"` is the backlog each worker is expected to handle: KEDA runs one worker per 10 messages, rounded up and counting jobs already running. One job wakes the first worker, 11 start a second, 41 or more run all five. Lower it to drain faster with more workers.
+
+Convox does not create the queue. Once per environment, outside Convox:
+
+| Where       | What                                                                                                                                                                    |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Queue       | Visibility timeout of at least 90 seconds. On SQS it replaces `retry_after`, so it must exceed `--timeout=60`                                                         |
+| Dead letter | Optional. Its `maxReceiveCount` must be above `--tries` (3), or SQS moves a job there before Laravel records it in `failed_jobs`                                        |
+| IAM         | `app` and `scheduler` dispatch jobs: `sqs:SendMessage`. `queue` runs them: `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:ChangeMessageVisibility`, `sqs:GetQueueAttributes` |
+| App env     | `convox env set SQS_PREFIX=https://sqs.eu-west-1.amazonaws.com/<account-id> SQS_QUEUE=<queue-name>`                                                                     |
+
+The app needs `aws/aws-sdk-php`. `awsRegion` in the trigger is written out because Convox fills `${…}` only from `convox env`; keep it equal to the queue's region. SQS caps a dispatch delay at 15 minutes, so `->delay()` beyond that throws.
+
+Inspecting jobs:
+
+- **Failed jobs** stay in the `failed_jobs` table: `queue:failed`, `queue:retry` and `queue:flush` work as with any driver.
+- **Pending jobs** cannot be listed, only counted: `php artisan queue:monitor sqs:default`, `aws sqs get-queue-attributes`, or CloudWatch `ApproximateNumberOfMessagesVisible`. `queue:clear` purges the queue. Avoid "Poll for messages" in the SQS console: it counts as a delivery and hides the job for the visibility timeout.
+
+**Racks without KEDA** (anything but AWS, or `keda_enable=false`): Convox ignores `scale.autoscale` and runs the minimum of `count`, so `app` stays at one replica and `queue` at zero, with jobs never processed. There, use `scale.targets` on `app` (`cpu: 70`, `memory: 90`), give `queue` `count: 1` without `autoscale`, and set `QUEUE_CONNECTION` to `redis` or `database`, dropping `SQS_PREFIX` and `SQS_QUEUE`.
+
+---
+
 ## Scheduler
 
 Laravel's scheduler needs `php artisan schedule:run` invoked continuously. There are three ways to wire that up in Kubernetes/Convox, from least to most complex:
@@ -802,7 +827,7 @@ The rule for every service: **PHP must hit its own `memory_limit` before the pod
 | Service     | `scale.cpu` | `scale.memory` | Count          | Sized for                                             |
 | ----------- | ----------- | -------------- | -------------- | ----------------------------------------------------- |
 | `app`       | 250         | 1024           | 1–30, autoscaled on CPU 70% / memory 90% | Concurrent requests (FPM children or Octane workers) |
-| `queue`     | 250         | 320            | 1              | One worker, one job at a time                         |
+| `queue`     | 250         | 320            | 0–5, KEDA on SQS queue length (10 per worker) | One worker, one job at a time |
 | `scheduler` | 120         | 256            | 1              | `schedule:work` plus one `schedule:run` child         |
 
 ### What a PHP Process Costs

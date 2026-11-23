@@ -6,6 +6,7 @@
   "build_disable_convox_resolver": "true",
   "proxy_protocol": "true",
   "fast_image_pull_enable": "true",
+  "keda_enable": "true",
   "imds_http_tokens": "required",
   "pod_imds_block_enabled": "true",
   "pod_identity_agent_enable": "true",

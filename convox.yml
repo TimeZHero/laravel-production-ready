@@ -24,7 +24,9 @@ environment:
   - AWS_USE_PATH_STYLE_ENDPOINT=true
 
   - CACHE_STORE
-  - QUEUE_CONNECTION
+  - QUEUE_CONNECTION=sqs
+  - SQS_PREFIX
+  - SQS_QUEUE
   - LOG_CHANNEL=stderr
   - REDIS_PERSISTENT=true
 
@@ -97,9 +99,11 @@ services:
       grace: 75
     scale:
       count: 1-30
-      targets:
-        cpu: 70
-        memory: 90
+      autoscale:
+        cpu:
+          threshold: 70
+        memory:
+          threshold: 90
       cpu: 250
       memory: 1024
 
@@ -116,7 +120,14 @@ services:
     termination:
       grace: 70
     scale:
-      count: 1
+      count: 0-5
+      autoscale:
+        custom:
+          - type: aws-sqs-queue
+            metadata:
+              queueURL: ${SQS_PREFIX}/${SQS_QUEUE}
+              awsRegion: eu-west-1
+              queueLength: "10"
       cpu: 250
       memory: 320
 
