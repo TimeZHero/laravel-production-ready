@@ -16,7 +16,6 @@
   "seccomp_default_enabled": "true",
   "system_readonly_rootfs_enabled": "true",
   "eks_access_entries": "true",
-  "ecr_scan_on_push_enable": "true",
   "cloudwatch_retention_in_days": "30",
   "access_log_retention_in_days": "30",
   "router_log_redact_params": "signature,token,password",
